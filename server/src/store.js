@@ -2,9 +2,14 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { classify } from './classify.js';
+import { assignClusters, clusterAll, articleHash } from './cluster.js';
 
-// Stories are kept on disk so past days stay browsable after the 20-minute
+// Articles are kept on disk so past days stay browsable after the 20-minute
 // refresh replaces today's headlines. Retention is ARCHIVE_DAYS (default 14).
+//
+// Each article carries a clusterId assigned once, when it is first seen. That
+// id is the story id in the UI, so a story's URL never changes even as more
+// outlets join it on later refreshes.
 const DATA_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data');
 const FILE = path.join(DATA_DIR, 'archive.json');
 const DAYS = Math.max(1, +process.env.ARCHIVE_DAYS || 14);
@@ -13,6 +18,7 @@ const MAX = 20000;
 let articles = [];
 let updatedAt = null;
 let dirty = false;
+let stories = null;
 
 export function loadArchive() {
   try {
@@ -28,11 +34,21 @@ export function loadArchive() {
       });
       return { ...a, region, category };
     });
-    updatedAt = parsed.updatedAt || null;
-    console.log(`archive: ${articles.length} stories loaded`);
+    console.log(`archive: ${articles.length} articles loaded`);
   } catch {
+    articles = [];
     console.log('archive: starting empty');
   }
+
+  const legacy = articles.filter((a) => a?.url && !a.clusterId);
+  if (legacy.length) {
+    const assigned = clusterAll(legacy);
+    for (const a of legacy) a.clusterId = assigned.get(a.url) || articleHash(a.url);
+    console.log(`archive: clustered ${legacy.length} legacy articles into stories`);
+    dirty = true;
+  }
+  if (dirty) save();
+  stories = null;
 }
 
 function save() {
@@ -47,30 +63,67 @@ function save() {
   }
 }
 
-const bySource = (list) => {
-  const seen = new Set();
-  return list.filter((x) => x && x.source && !seen.has(x.source) && seen.add(x.source));
-};
-
 export function mergeIntoStore(fresh) {
   const map = new Map(articles.map((a) => [a.url, a]));
+  const incoming = [];
+
   for (const a of fresh) {
     const prev = map.get(a.url);
-    map.set(a.url, prev
-      ? { ...prev, ...a, alsoReportedBy: bySource([...(prev.alsoReportedBy || []), ...(a.alsoReportedBy || [])]) }
-      : a);
+    if (prev) {
+      // Keep the id the story was first filed under.
+      map.set(a.url, { ...prev, ...a, clusterId: prev.clusterId || a.clusterId });
+    } else {
+      incoming.push(a);
+    }
   }
+
+  if (incoming.length) {
+    const existing = [...map.values()].filter((a) => a.clusterId);
+    const assigned = assignClusters(incoming, existing);
+    for (const a of incoming) map.set(a.url, { ...a, clusterId: assigned.get(a.url) || articleHash(a.url) });
+  }
+
   const cutoff = Date.now() - DAYS * 864e5;
   articles = [...map.values()]
-    .filter((a) => a && new Date(a.publishedAt) >= cutoff)
+    .filter((a) => a?.url && new Date(a.publishedAt) >= cutoff)
     .sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt))
     .slice(0, MAX);
+
   updatedAt = new Date().toISOString();
+  stories = null;
+  dirty = true;
   save();
 }
 
+// A story is one cluster: the earliest report leads, every other outlet that
+// carried it becomes "also reported by". Cached until the next merge.
+function buildStories() {
+  const groups = new Map();
+  for (const a of articles) {
+    const cid = a.clusterId || articleHash(a.url);
+    let group = groups.get(cid);
+    if (!group) { group = []; groups.set(cid, group); }
+    group.push(a);
+  }
+
+  const out = [];
+  for (const [id, members] of groups) {
+    members.sort((x, y) => new Date(x.publishedAt) - new Date(y.publishedAt));
+    const primary = members.find((m) => m.summary) || members[0];
+    const alsoReportedBy = members.filter((m) => m !== primary).map((m) => ({
+      source: m.source, url: m.url, title: m.title,
+      publishedAt: m.publishedAt, lean: m.lean, author: m.author || null, image: m.image || null,
+    }));
+    const latestAt = members[members.length - 1].publishedAt;
+    out.push({ ...primary, id, alsoReportedBy, latestAt });
+  }
+
+  return out.sort((a, b) => new Date(b.latestAt) - new Date(a.latestAt));
+}
+
 export function snapshot() {
-  return { articles, updatedAt };
+  if (!stories) stories = buildStories();
+  return { articles: stories, updatedAt };
 }
 
 export function flush() {
@@ -86,7 +139,7 @@ export const dayIn = (iso, tz = 0) => {
 
 export function daysAvailable(tz = 0) {
   const counts = new Map();
-  for (const a of articles) {
+  for (const a of snapshot().articles) {
     const d = dayIn(a.publishedAt, tz);
     if (d) counts.set(d, (counts.get(d) || 0) + 1);
   }

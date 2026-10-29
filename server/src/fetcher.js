@@ -30,7 +30,6 @@ function normalize(i, feed) {
   const base = strip(i.contentSnippet || i.summary || '') || text;
   if (!i.title || !i.link) return null;
   const time = new Date(i.isoDate || i.pubDate || Date.now());
-  const sentences = sentencesOf(text);
   const title = strip(i.title);
   const summary = excerpt(base || text, 300);
   const detail = excerpt(text || base, 900);
@@ -165,41 +164,9 @@ export async function apiItems() {
   return apiCache.items;
 }
 
-// ---- duplicate detection: title token containment ----
-// Headlines for the same event are worded very differently by different
-// outlets, so Jaccard is too strict. We compare shared distinctive tokens
-// against the shorter headline and require at least 3 shared words.
-const STOP = new Set('with from that this have will after over into about their says said amid than what when who how why for and the are was has also more than says'.split(' '));
-const tokens = (t) => new Set(t.toLowerCase().replace(/\s[-|–]\s[^-|–]{2,60}$/, '')
-  .replace(/[^a-z0-9 ]/g, ' ').split(' ').filter((w) => w.length > 2 && !STOP.has(w)));
-const similarity = (a, b) => {
-  let n = 0;
-  for (const x of a) if (b.has(x)) n++;
-  return { shared: n, score: n / (Math.min(a.size, b.size) || 1) };
-};
-
-export function dedupe(items) {
-  const out = [];
-  for (const it of items) {
-    const tk = tokens(it.title);
-    const hit = out.find((o) => {
-      if (o.source === it.source || o._tk.size < 3 || tk.size < 3) return false;
-      const { shared, score } = similarity(o._tk, tk);
-      return shared >= 3 && score >= 0.5;
-    });
-    if (hit) {
-      if (!hit.alsoReportedBy.some((a) => a.source === it.source)) {
-        hit.alsoReportedBy.push({
-          source: it.source, url: it.url, title: it.title,
-          publishedAt: it.publishedAt, lean: it.lean || 'unrated',
-        });
-      }
-      if (!hit.image && it.image) hit.image = it.image;
-    } else out.push(Object.assign(it, { _tk: tk }));
-  }
-  return out.map(({ _tk, ...rest }) => rest);
-}
-
+// Clustering into stories happens in cluster.js, against the archive, so that
+// story ids stay stable across refreshes. Here we only normalise and dedupe by
+// URL, which is what stops the same link arriving from two feeds twice.
 export async function fetchAll() {
   const jobs = FEEDS.map((f) => fromFeed(f));
   if (process.env.GUARDIAN_API_KEY) jobs.push(fromGuardian(process.env.GUARDIAN_API_KEY));
@@ -210,5 +177,5 @@ export async function fetchAll() {
   const all = [...apis, ...results.flatMap((r) => (r.status === 'fulfilled' ? r.value : []))]
     .filter((a) => a && new Date(a.publishedAt) > cutoff && !seen.has(a.url) && seen.add(a.url))
     .sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt));
-  return dedupe(all).slice(0, 3000);
+  return all.slice(0, 4000);
 }
