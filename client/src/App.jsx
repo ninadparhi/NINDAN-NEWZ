@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  api, dayLabel, localDay, Card, CoverageBar, bucketCounts, bucketTotal, emptyCounts,
+  api, dayLabel, localDay, Card, CoverageBar, bucketTotal, emptyCounts, dominantBucket,
   BUCKETS, BiasChip, leanInfo,
 } from './ui.jsx';
 import StoryPage from './StoryPage.jsx';
@@ -64,14 +64,16 @@ function Skeletons() {
 }
 
 function StatsRail({ articles, days, onDay }) {
+  // One count per story, placed by the lean of the outlets that dominate it.
+  // Counting raw articles would let a 9-outlet wire roundup outweigh 9 stories.
   const mix = useMemo(
     () => articles.reduce((acc, a) => {
-      const b = bucketCounts(a);
-      for (const k of Object.keys(acc)) acc[k] += b[k];
+      acc[dominantBucket(a).key] += 1;
       return acc;
     }, emptyCounts()),
     [articles],
   );
+  const storyCount = articles.length;
   const mostCovered = useMemo(
     () => [...articles].sort((a, b) => (b.alsoReportedBy.length - a.alsoReportedBy.length)).filter((a) => a.alsoReportedBy.length).slice(0, 4),
     [articles],
@@ -82,10 +84,10 @@ function StatsRail({ articles, days, onDay }) {
     <div className="space-y-5">
       <section className="rounded-2xl border border-line bg-surface p-5">
         <h2 className="font-head text-lg font-bold">Coverage mix</h2>
-        <p className="mt-1 text-xs text-muted">Editorial lean of the outlets covering these stories.</p>
+        <p className="mt-1 text-xs text-muted">Lean of the outlets that dominate each story — one count per story, not per article.</p>
         <CoverageBar counts={mix} className="mt-3 h-2" />
         <div className="mt-3 space-y-1.5">
-          {BUCKETS.filter((b) => mix[b.key]).map((b) => (
+          {BUCKETS.filter((b) => b.key !== 'unrated' || mix.unrated).map((b) => (
             <div key={b.key} className="flex items-center gap-2 text-xs">
               <span className={`h-2 w-2 rounded-full ${b.className}`} aria-hidden />
               <span className="text-muted">{b.label}</span>
@@ -94,6 +96,12 @@ function StatsRail({ articles, days, onDay }) {
             </div>
           ))}
         </div>
+        <p className="mt-2 text-[11px] text-muted">{storyCount} stories in this view</p>
+        {storyCount > 0 && storyCount < 10 && (
+          <p className="mt-2 rounded-lg border border-line bg-surface2/60 px-2.5 py-2 text-[11px] leading-relaxed text-muted">
+            Small sample: only {storyCount} {storyCount === 1 ? 'story' : 'stories'} here, so this mix is not representative.
+          </p>
+        )}
         <details className="mt-3 border-t border-line pt-3 text-xs text-muted">
           <summary className="cursor-pointer font-medium text-ink">How lean labels work</summary>
           <p className="mt-2 leading-relaxed">
