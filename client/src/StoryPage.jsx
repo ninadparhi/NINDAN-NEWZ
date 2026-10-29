@@ -127,12 +127,13 @@ export default function StoryPage({ id }) {
             <time dateTime={a.publishedAt} className="text-muted">{full(a.publishedAt)}</time>
           </div>
 
-          {a.image && (
-            <figure className="mt-6">
-              <Image src={a.image} alt="" className="aspect-[16/8] w-full rounded-2xl object-cover" />
-              <figcaption className="mt-2 text-[11px] text-muted">Image via {a.source}. Rights belong to the publisher.</figcaption>
-            </figure>
-          )}
+          <figure className="mt-6">
+            <Image src={a.image} fallbackUrl={a.url} source={a.source} category={a.category}
+              className="aspect-[16/6] w-full rounded-2xl sm:aspect-[16/8]" />
+            <figcaption className="mt-2 text-[11px] text-muted">
+              {a.image ? `Image via ${a.source}.` : `Preview image from ${a.source}.`} Rights belong to the publisher.
+            </figcaption>
+          </figure>
 
           {(body || a.keyPoints?.length > 1) && (
             <section className="mt-8">

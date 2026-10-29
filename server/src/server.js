@@ -9,6 +9,7 @@ import { fetchAll } from './fetcher.js';
 import { CATEGORIES, FEEDS } from './feeds.js';
 import { LEANS, LEAN_BUCKETS, SOURCE_META, bucketCountsOf } from './bias.js';
 import { loadArchive, mergeIntoStore, snapshot, daysAvailable, dayIn } from './store.js';
+import { ogImage } from './images.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -98,6 +99,20 @@ app.get('/api/meta', (_req, res) => {
     feedCount: FEEDS.length,
     updatedAt: snapshot().updatedAt,
   });
+});
+
+// Lazy og:image lookup for cards whose feed item had no picture. The result is
+// written back onto the archived story so later loads are instant.
+app.get('/api/image', async (req, res) => {
+  const url = String(req.query.u || '');
+  if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'A http(s) article url is required' });
+  const image = await ogImage(url);
+  if (image) {
+    const a = snapshot().articles.find((x) => x.url === url);
+    if (a && !a.image) a.image = image;
+  }
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.json({ image });
 });
 
 app.get('/api/breaking', (_req, res) =>

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from './router.jsx';
 
 export const TZ = -new Date().getTimezoneOffset();
@@ -104,18 +104,69 @@ export function CoverageBar({ counts, className = 'h-2' }) {
   );
 }
 
-export function Image({ src, alt = '', className }) {
-  const [ok, setOk] = useState(!!src);
-  if (ok) {
-    return <img src={src} alt={alt} loading="lazy" decoding="async" referrerPolicy="no-referrer"
-      onError={() => setOk(false)} className={className} />;
-  }
+const initials = (s = '') =>
+  s.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '•';
+const hueOf = (s = '') => {
+  let h = 0;
+  for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360;
+  return h;
+};
+
+// Publisher-branded stand-in: the outlet's initials in a stable hue derived
+// from its name, plus the category. Better than a blank grey rectangle, and it
+// carries the same information the image would have.
+function BrandedPlaceholder({ source, category }) {
+  const h = hueOf(source);
   return (
-    <div className={`${className} flex items-center justify-center bg-gradient-to-br from-surface2 via-surface2 to-line/50`} aria-hidden>
-      <svg viewBox="0 0 24 24" className="h-9 w-9 text-muted/50" fill="none" stroke="currentColor" strokeWidth="1.4">
-        <path d="M4 5h11a2 2 0 0 1 2 2v12H6a2 2 0 0 1-2-2V5Z" /><path d="M17 9h3v8a2 2 0 0 1-2 2" />
-        <path d="M7 9h5M7 13h5" />
-      </svg>
+    <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-surface2 dark:bg-surface2">
+      <span className="grid h-11 w-11 place-items-center rounded-xl font-head text-sm font-bold text-white shadow-sm"
+        style={{ backgroundColor: `hsl(${h} 34% 38%)` }} aria-hidden>
+        {initials(source)}
+      </span>
+      <span className="px-3 text-center text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">{source}</span>
+      {category && <span className="text-[10px] text-muted/80">{category}</span>}
+    </div>
+  );
+}
+
+// Image with three steps: the feed's own picture, then the publisher's
+// og:image (fetched lazily once the slot is near the viewport), then a
+// source-branded placeholder. Never a blank box.
+export function Image({ src, fallbackUrl, source = '', category = '', alt = '', className = '' }) {
+  const [current, setCurrent] = useState(src || null);
+  const [dead, setDead] = useState(false);
+  const asked = useRef(false);
+  const box = useRef(null);
+
+  const askPublisher = useCallback(() => {
+    if (asked.current || !fallbackUrl) { setDead(true); return; }
+    asked.current = true;
+    fetch(`/api/image?u=${encodeURIComponent(fallbackUrl)}`)
+      .then((r) => (r.ok ? r.json() : { image: null }))
+      .then(({ image }) => { if (image) { setCurrent(image); setDead(false); } else setDead(true); })
+      .catch(() => setDead(true));
+  }, [fallbackUrl]);
+
+  useEffect(() => {
+    if (current || dead || !fallbackUrl) return;
+    const el = box.current;
+    if (!el || typeof IntersectionObserver === 'undefined') { askPublisher(); return undefined; }
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) { io.disconnect(); askPublisher(); }
+    }, { rootMargin: '300px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [current, dead, fallbackUrl, askPublisher]);
+
+  return (
+    <div ref={box} className={`relative overflow-hidden ${className}`}>
+      {current && !dead ? (
+        <img src={current} alt={alt} loading="lazy" decoding="async" referrerPolicy="no-referrer"
+          onError={() => { setCurrent(null); askPublisher(); }}
+          className="absolute inset-0 h-full w-full object-cover" />
+      ) : (
+        <BrandedPlaceholder source={source} category={category} />
+      )}
     </div>
   );
 }
@@ -126,7 +177,8 @@ export function Card({ a, featured = false }) {
   return (
     <article className={`group relative flex overflow-hidden rounded-2xl border border-line bg-surface transition-shadow duration-200 hover:shadow-[0_10px_30px_-12px_rgb(0_0_0_/_0.25)] ${featured ? 'flex-col sm:col-span-2 sm:flex-row' : 'flex-col'}`}>
       <Link href={`/story/${a.id}`} className={`block shrink-0 overflow-hidden bg-surface2 ${featured ? 'sm:w-[47%]' : ''}`} tabIndex={-1} aria-hidden>
-        <Image src={a.image} className={`w-full object-cover transition-transform duration-500 group-hover:scale-[1.03] ${featured ? 'aspect-[16/9] sm:h-full sm:aspect-auto' : 'aspect-[16/9]'}`} />
+        <Image src={a.image} fallbackUrl={a.url} source={a.source} category={a.category}
+          className={`w-full transition-transform duration-500 group-hover:scale-[1.03] ${featured ? 'aspect-[16/9] sm:h-full sm:aspect-auto' : 'aspect-[16/9]'}`} />
       </Link>
       <div className={`flex flex-1 flex-col gap-2.5 p-4 ${featured ? 'sm:p-6' : ''}`}>
         <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-wider text-muted">
