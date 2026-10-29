@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { FEEDS } from './feeds.js';
 import { biasOf } from './bias.js';
 import { excerpt, cutWords, sentences, stripHtml } from './text.js';
+import { classify } from './classify.js';
 
 const UA = 'NewsAggregator/1.0 (+headline aggregator; links to originals)';
 const parser = new Parser({
@@ -32,16 +33,20 @@ function normalize(i, feed) {
   const sentences = sentencesOf(text);
   const title = strip(i.title);
   const summary = excerpt(base || text, 300);
+  const detail = excerpt(text || base, 900);
+  const { region, category } = classify({
+    title, summary, detail, feedRegion: feed.region, feedCategory: feed.category,
+  });
   return {
     id: id(i.link),
     title,
     // Card teaser: whole sentences, so it never stops mid-word or mid-clause.
     summary: summary.toLowerCase() === title.toLowerCase() ? '' : summary,
-    detail: excerpt(text || base, 900),     // detail view: still an excerpt, never the full article
+    detail,                                 // detail view: still an excerpt, never the full article
     keyPoints: sentences(text).filter((s) => s.length >= 40).slice(0, 4).map((s) => clip(s, 200)),
     image: pickImage(i),
     publishedAt: isNaN(time) ? new Date().toISOString() : time.toISOString(),
-    category: feed.category, region: feed.region, source: feed.source,
+    category, region, source: feed.source,
     author: i.creator || i.author || null,
     url: i.link,
     ...biasOf(feed.source),
@@ -72,27 +77,24 @@ async function fromGuardian(key) {
 // ---- Optional free-API adapters (Reuters / AP / PTI etc. have no public RSS) ----
 // Each key is optional: without it the adapter is skipped and RSS alone is used.
 // API results are cached in memory so a 20-minute refresh loop doesn't exhaust free tiers.
-const CAT_HINTS = [
-  ['Sports', /\b(cricket|football|soccer|olympic|tennis|badminton|ipl|match|league|cup|formula one|f1|basketball|hockey|wrestler)\b/i],
-  ['Entertainment', /\b(film|movie|bollywood|hollywood|actor|actress|music|concert|celebrity|box office|series|netflix|trailer)\b/i],
-  ['Health', /\b(health|hospital|disease|virus|covid|vaccine|cancer|medical|doctor|world health organization|nutrition)\b/i],
-  ['Science', /\b(science|scientist|nasa|space|isro|climate|research|physics|astronomy|discovery|species)\b/i],
-  ['Technology', /\b(tech|technology|artificial intelligence|\bai\b|smartphone|iphone|android|google|microsoft|openai|software|chip|semiconductor|cyber|gadget)\b/i],
-  ['Business', /\b(stock|market|economy|economic|inflation|rupee|sensex|nifty|gdp|trade|tariff|earnings|ipo|bank|finance|budget|company)\b/i],
-];
 const API_CATEGORY = { business: 'Business', technology: 'Technology', science: 'Science', sports: 'Sports', health: 'Health', entertainment: 'Entertainment', politics: 'Politics' };
-const guessCategory = (raw, text) => API_CATEGORY[String(raw || '').toLowerCase()]
-  || (CAT_HINTS.find(([, re]) => re.test(text)) || ['Politics'])[0];
 
 function apiArticle({ title, text, source, author, url, image, publishedAt, region, category }) {
   const clean = strip(text || '');
   const time = new Date(publishedAt || Date.now());
   if (!title || !url) return null;
+  const cleanTitle = strip(title);
+  const summary = excerpt(clean, 300);
+  const guess = classify({
+    title: cleanTitle, summary, detail: excerpt(clean, 900),
+    feedRegion: region, feedCategory: API_CATEGORY[String(category || '').toLowerCase()] || 'Politics',
+  });
   return {
-    id: id(url), title: strip(title), summary: excerpt(clean, 300), detail: excerpt(clean, 900),
+    id: id(url), title: cleanTitle, summary, detail: excerpt(clean, 900),
     keyPoints: sentencesOf(clean).slice(0, 4).map((s) => clip(s, 200)),
     image: image || null, publishedAt: isNaN(time) ? new Date().toISOString() : time.toISOString(),
-    category, region, source, author: author || null, url, ...biasOf(source), alsoReportedBy: [],
+    category: guess.category, region: guess.region, source, author: author || null, url,
+    ...biasOf(source), alsoReportedBy: [],
   };
 }
 
@@ -111,7 +113,7 @@ async function fromNewsApi(key) {
       if (!a.title || !a.url || a.title === '[Removed]') continue;
       out.push(apiArticle({ title: a.title, text: a.description || a.content, source: a.source?.name || 'NewsAPI',
         author: a.author, url: a.url, image: a.urlToImage, publishedAt: a.publishedAt, region,
-        category: guessCategory('', `${a.title} ${a.description || ''}`) }));
+        category: '' }));
     }
   }
   return out.filter(Boolean);
@@ -124,7 +126,7 @@ async function fromGNews(key) {
     for (const a of j.articles || []) {
       out.push(apiArticle({ title: a.title, text: a.description || a.content, source: a.source?.name || 'GNews',
         author: null, url: a.url, image: a.image, publishedAt: a.publishedAt, region,
-        category: guessCategory('', `${a.title} ${a.description || ''}`) }));
+        category: '' }));
     }
   }
   return out.filter(Boolean);
@@ -138,7 +140,7 @@ async function fromNewsData(key) {
       const when = a.pubDate ? a.pubDate.replace(' ', 'T') + 'Z' : null;
       out.push(apiArticle({ title: a.title, text: a.description || a.content, source: a.source_name || 'NewsData',
         author: Array.isArray(a.creator) ? a.creator.join(', ') : a.creator, url: a.link, image: a.image_url,
-        publishedAt: when, region, category: guessCategory(a.category?.[0], `${a.title} ${a.description || ''}`) }));
+        publishedAt: when, region, category: a.category?.[0] || '' }));
     }
   }
   return out.filter(Boolean);

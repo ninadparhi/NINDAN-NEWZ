@@ -1,7 +1,11 @@
 {
   "name": "news-server",
   "type": "module",
-  "scripts": { "start": "node src/server.js", "dev": "node --watch src/server.js" },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test test/"
+  },
   "dependencies": {
     "compression": "^1.7.4",
     "cors": "^2.8.5",
