@@ -25,20 +25,30 @@ function filtersFromUrl() {
 const field = 'h-10 w-full rounded-xl border border-line bg-surface px-3 text-sm text-ink placeholder:text-muted/70 focus:border-accent focus:outline-none';
 
 function Ticker({ items }) {
-  if (!items.length) return null;
+  // Dedupe by headline and by outlet before the marquee repeats the list.
+  const seen = new Set();
+  const list = items.filter((t) => {
+    const k = t.title.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  if (!list.length) return null;
   return (
     <div className="border-b border-line bg-surface2/70" aria-label="Latest headlines">
       <div className="mx-auto flex max-w-content items-center gap-3 px-4">
         <span className="shrink-0 border-r border-line py-2 pr-3 text-[10px] font-bold uppercase tracking-[0.14em] text-accent">Live</span>
         <div className="overflow-hidden">
           <div className="ticker flex w-max gap-7 whitespace-nowrap py-2 text-xs">
-            {[...items, ...items].map((t, i) => (
-              <Link key={`${t.id}-${i}`} href={`/story/${t.id}`} className="hover:underline">
+            {[0, 1].map((copy) => list.map((t) => (
+              <Link key={`${t.id}-${copy}`} href={`/story/${t.id}`} title={t.title}
+                aria-hidden={copy === 1 || undefined} tabIndex={copy === 1 ? -1 : undefined}
+                className="hover:underline">
                 <span className="font-semibold text-ink">{t.source}</span>
                 <span className="mx-1.5 text-muted" aria-hidden>·</span>
                 <span className="text-muted">{t.title}</span>
               </Link>
-            ))}
+            )))}
           </div>
         </div>
       </div>

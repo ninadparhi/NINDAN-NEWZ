@@ -10,6 +10,7 @@ import { CATEGORIES, FEEDS } from './feeds.js';
 import { LEANS, LEAN_BUCKETS, SOURCE_META, bucketCountsOf } from './bias.js';
 import { loadArchive, mergeIntoStore, snapshot, daysAvailable, dayIn } from './store.js';
 import { ogImage } from './images.js';
+import { cutWords } from './text.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -115,8 +116,31 @@ app.get('/api/image', async (req, res) => {
   res.json({ image });
 });
 
-app.get('/api/breaking', (_req, res) =>
-  res.json(snapshot().articles.slice(0, 12).map(({ id, title, source, url }) => ({ id, title, source, url }))));
+// Ticker items: one headline per event, at most two per outlet, cut at a word
+// boundary so a long headline never ends mid-word.
+const tickerKey = (t) => t.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+const words = (t) => new Set(tickerKey(t).split(' ').filter((w) => w.length > 2));
+const overlap = (a, b) => {
+  let n = 0;
+  for (const w of a) if (b.has(w)) n++;
+  return n / Math.min(a.size, b.size || 1);
+};
+
+app.get('/api/breaking', (_req, res) => {
+  const picked = [];
+  const perSource = new Map();
+  const seen = [];
+  for (const a of snapshot().articles) {
+    if (picked.length >= 14) break;
+    if ((perSource.get(a.source) || 0) >= 2) continue;
+    const w = words(a.title);
+    if (w.size < 2 || seen.some((s) => overlap(s, w) >= 0.75)) continue;
+    seen.push(w);
+    perSource.set(a.source, (perSource.get(a.source) || 0) + 1);
+    picked.push({ id: a.id, title: cutWords(a.title.replace(/\s+/g, ' ').trim(), 96), source: a.source, url: a.url, lean: a.lean });
+  }
+  res.json(picked);
+});
 
 // Serve the built client in production (single-service deploy, e.g. Render)
 const dist = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../client/dist');
