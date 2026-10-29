@@ -167,11 +167,30 @@ export async function apiItems() {
 // Clustering into stories happens in cluster.js, against the archive, so that
 // story ids stay stable across refreshes. Here we only normalise and dedupe by
 // URL, which is what stops the same link arriving from two feeds twice.
+// A handful of feeds at a time: 70 parallel requests get us rate-limited.
+const mapLimit = async (items, limit, fn) => {
+  const out = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      try { out[i] = { status: 'fulfilled', value: await fn(items[i]) }; }
+      catch (e) { out[i] = { status: 'rejected', reason: e }; }
+    }
+  }));
+  return out;
+};
+
 export async function fetchAll() {
-  const jobs = FEEDS.map((f) => fromFeed(f));
-  if (process.env.GUARDIAN_API_KEY) jobs.push(fromGuardian(process.env.GUARDIAN_API_KEY));
-  const [results, apis] = await Promise.all([Promise.allSettled(jobs), apiItems().catch(() => [])]);
-  results.forEach((r, n) => r.status === 'rejected' && console.warn('feed failed:', FEEDS[n]?.url || 'guardian', r.reason?.message));
+  const targets = [...FEEDS.map((f) => ({ url: f.url, run: () => fromFeed(f) }))];
+  if (process.env.GUARDIAN_API_KEY) {
+    targets.push({ url: 'guardian-api', run: () => fromGuardian(process.env.GUARDIAN_API_KEY) });
+  }
+  const [results, apis] = await Promise.all([
+    mapLimit(targets, 8, (t) => t.run()),
+    apiItems().catch(() => []),
+  ]);
+  results.forEach((r, n) => r.status === 'rejected' && console.warn('feed failed:', targets[n]?.url, r.reason?.message));
   const cutoff = Date.now() - 7 * 864e5;
   const seen = new Set();
   const all = [...apis, ...results.flatMap((r) => (r.status === 'fulfilled' ? r.value : []))]
