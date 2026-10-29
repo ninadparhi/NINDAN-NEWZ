@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assignClusters, pairScore, buildModel, CLUSTER_CONFIG } from '../src/cluster.js';
+import { assignClusters, pairScore, buildModel, entities, CLUSTER_CONFIG } from '../src/cluster.js';
 
 const ago = (hours) => new Date(Date.now() - hours * 3600e3).toISOString();
 let n = 0;
@@ -29,6 +29,13 @@ const SHETTY_B = {
   title: 'B.R. Shetty seeks Bank of Baroda records, financial security in new applications',
   summary: 'Shetty filed new applications seeking records from Bank of Baroda and financial security.',
 };
+
+test('connectors are never mistaken for named entities', () => {
+  const found = [...entities('India and China sign a border pact in Delhi. The United States and the UK welcomed it.')];
+  assert.ok(!found.includes('and'));
+  assert.ok(!found.some((e) => e.endsWith(' and')));
+  assert.ok(found.includes('india and china'.replace(' and china', '')) || found.includes('india'));
+});
 
 test('the Shetty / Bank of Baroda pair is one story even across outlets', () => {
   const a = article(SHETTY_A.title, SHETTY_A.summary, 'Mint', 3);

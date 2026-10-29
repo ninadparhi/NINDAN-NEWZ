@@ -10,6 +10,10 @@ import { sentences } from './text.js';
 // story id for good — so story URLs stay stable across refreshes.
 //
 // Thresholds are tunable from the environment; see .env.example.
+// Bump when the scoring changes: archives saved under an older version are
+// re-clustered once on load. Story ids are stable within a version.
+export const CLUSTER_VERSION = 4;
+
 export const CLUSTER_CONFIG = {
   // Cosine-weighted score (0..1) a pair must reach to be treated as one story.
   threshold: Number(process.env.CLUSTER_THRESHOLD) || 0.45,
@@ -20,6 +24,10 @@ export const CLUSTER_CONFIG = {
   // Penalty when both reports quote figures and none of them match
   // ("beat India by 5 wickets" vs "beat India by 3 wickets").
   numberConflictPenalty: 0.22,
+  // Even with shared names, the wording has to overlap this much before two
+  // reports count as the same event. Stops a cluster growing by chaining
+  // through a roundup headline that mentions several unrelated topics.
+  minCosine: Number(process.env.CLUSTER_MIN_COSINE) || 0.18,
   // Extra penalty when two texts are textually close but share no entity at
   // all, which is usually two different events described in similar words.
   noEntityPenalty: 0.12,
@@ -46,18 +54,26 @@ export const tokens = (text = '') => String(text).toLowerCase()
 
 const CAP = /^[A-Z][\w'’.-]*$/;
 const CONNECTOR = /^(of|the|and|for|&|de|al|bin)$/i;
+// Capitalised words that only look like names because they open a sentence.
+const CAP_STOP = new Set(['the', 'a', 'an', 'this', 'that', 'these', 'those', 'it', 'he', 'she', 'they', 'we', 'you', 'i', 'but', 'and', 'however', 'after', 'before', 'new', 'why', 'how', 'what', 'when', 'where', 'who', 'top', 'watch', 'live', 'video', 'opinion', 'exclusive', 'breaking', 'read', 'here', 'there', 'now']);
 
 const normalizeEntity = (s) => s
   .replace(/[“”"'()[\]]/g, '')
   .replace(/[.,;:]+$/, '')
   .replace(/\s+/g, ' ')
   .trim()
-  .toLowerCase();
+  .toLowerCase()
+  .replace(/^(the|a|an|of|and|for)\s+/, '');
 
 // Institutions are shared by unrelated events (two different cases in the
 // Bombay High Court), so they count for less than a named person or company.
-const GENERIC_HEAD = /(court|police|government|ministry|minister|department|commission|council|agency|authority|board|committee|parliament|assembly|administration|office|bureau)$/;
+const GENERIC_HEAD = /(court|police|government|ministry|minister|department|commission|council|agency|authority|board|committee|parliament|assembly|senate|congress|administration|office|bureau|opposition|election|elections|party|union|state|city)$/;
 export const entityWeight = (name) => (GENERIC_HEAD.test(name) ? 0.5 : 1);
+
+// Country names are in almost every headline of a national feed, so on their
+// own they say very little about whether two reports are the same event.
+const COUNTRY = /^(india|indian|bharat|us|usa|united states|america|uk|britain|china|chinese|pakistan|russia|ukraine|israel|gaza|japan|australia|canada|france|germany|europe|world)$/;
+export const isCountryEntity = (name) => COUNTRY.test(name);
 
 // Proper-noun phrases ("Bombay High Court", "Bank of Baroda", "B.R. Shetty"),
 // acronyms (NMC, RBI) and single mid-sentence names (Modi, Trump).
@@ -67,16 +83,28 @@ export function entities(text = '') {
     const words = sentence.split(/\s+/).filter(Boolean);
     let run = [];
     const flush = () => {
+      // "India and" is not an entity: drop trailing connectors before use.
+      while (run.length && CONNECTOR.test(run[run.length - 1].word)) run.pop();
       if (run.length) {
         const wordsInRun = run.map((r) => r.word);
         const first = run[0];
         const strong = run.length > 1 || /^[A-Z]{2,}$/.test(first.word) || first.word.includes('.');
         // A lone capitalised word that opens a sentence is usually just "The".
-        if (strong || first.at !== 0) {
+        const single = wordsInRun.length === 1;
+        const atStart = first.at === 0;
+        if (strong || !atStart || !CAP_STOP.has(wordsInRun[0].toLowerCase())) {
           // "President Donald Trump" must still match "Donald Trump" and "Trump".
           for (let i = 0; i < wordsInRun.length; i++) {
-            const part = normalizeEntity(wordsInRun.slice(i).join(' '));
+            if (CONNECTOR.test(wordsInRun[i])) continue;
+            const slice = [];
+            for (let j = i; j < wordsInRun.length && !CONNECTOR.test(wordsInRun[j]); j++) slice.push(wordsInRun[j]);
+            const part = normalizeEntity(slice.join(' '));
             if (part.length > 2 && /\w/.test(part)) out.add(part);
+          }
+          // Keep the phrase itself too ("United States and the UK").
+          if (!single) {
+            const whole = normalizeEntity(wordsInRun.join(' '));
+            if (whole.length > 2 && /\w/.test(whole)) out.add(whole);
           }
         }
       }
@@ -199,7 +227,9 @@ export function pairScore(a, b, model, config = CLUSTER_CONFIG) {
   const matched = [...fa.ents].filter((e) => fb.ents.has(e));
   const longest = matched.filter((e) => !matched.some((o) => o !== e && o.endsWith(` ${e}`)));
   const ents = longest.length;
-  const entWeight = longest.reduce((n, e) => n + entityWeight(e), 0);
+  const entWeight = longest.reduce((n, e) => n + (isCountryEntity(e) ? 0.25 : entityWeight(e)), 0);
+  // Names that actually identify the event: not a country, not an institution.
+  const distinctive = longest.filter((e) => !isCountryEntity(e) && entityWeight(e) === 1).length;
   const numsBoth = fa.nums.size > 0 && fb.nums.size > 0;
   const numsShared = shared(fa.nums, fb.nums);
 
@@ -211,7 +241,10 @@ export function pairScore(a, b, model, config = CLUSTER_CONFIG) {
   if (numsBoth && !numsShared) score -= config.numberConflictPenalty;
   if (ents === 0) score -= config.noEntityPenalty;
 
-  return { score, cosine: cos, entities: ents, numbers: numsBoth ? numsShared : null, sameTime: Math.abs(fa.at - fb.at) };
+  return {
+    score, cosine: cos, entities: ents, entityWeight: entWeight, distinctive,
+    numbers: numsBoth ? numsShared : null, sameTime: Math.abs(fa.at - fb.at),
+  };
 }
 
 export const articleHash = (url) => crypto.createHash('sha1').update(url).digest('hex').slice(0, 12);
@@ -243,15 +276,24 @@ export function assignClusters(newArticles, existingArticles = [], config = CLUS
     let bestScore = 0;
     for (const g of groups.values()) {
       if (g.sources.has(a.source)) continue;
-      let compared = 0;
-      for (const d of g.docs) {
+      // Compare against the opening report and the most recent ones: a long
+      // chain of weak links must not pull unrelated stories together.
+      const recent = g.docs.slice(-6);
+      const probes = g.docs[0] && !recent.includes(g.docs[0]) ? [g.docs[0], ...recent] : recent;
+      for (const d of probes) {
         if (Math.abs(new Date(d.publishedAt).getTime() - at) > span) continue;
-        if (compared++ > 25) break;                 // a cluster rarely needs more
-        const { score } = pairScore(d, a, model, cfg);
-        if (score > bestScore) { bestScore = score; best = g; }
+        const r = pairScore(d, a, model, cfg);
+        // A borderline score is only good enough when the two reports name the
+        // same distinctive thing (a person, company or place) or are nearly
+        // identical in wording. Otherwise "parliament" is enough to merge
+        // every political story of the day.
+        const qualifies = r.score >= cfg.threshold
+          && r.cosine >= cfg.minCosine
+          && (r.distinctive >= 1 || r.cosine >= 0.5);
+        if (qualifies && r.score > bestScore) { bestScore = r.score; best = g; }
       }
     }
-    if (best && bestScore >= cfg.threshold) {
+    if (best) {
       best.sources.add(a.source);
       best.docs.push(a);
       assigned.set(a.url, best.id);

@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { classify } from './classify.js';
-import { assignClusters, clusterAll, articleHash } from './cluster.js';
+import { assignClusters, clusterAll, articleHash, CLUSTER_VERSION } from './cluster.js';
 
 // Articles are kept on disk so past days stay browsable after the 20-minute
 // refresh replaces today's headlines. Retention is ARCHIVE_DAYS (default 14).
@@ -21,8 +21,10 @@ let dirty = false;
 let stories = null;
 
 export function loadArchive() {
+  let savedVersion = null;
   try {
     const parsed = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+    savedVersion = parsed.clusterVersion ?? 0;
     // Rows archived before the content classifier existed only carry their
     // feed's tag, so re-score them once on load. The classifier is stable, so
     // this is a no-op for everything it already got right.
@@ -40,12 +42,20 @@ export function loadArchive() {
     console.log('archive: starting empty');
   }
 
-  const legacy = articles.filter((a) => a?.url && !a.clusterId);
-  if (legacy.length) {
-    const assigned = clusterAll(legacy);
-    for (const a of legacy) a.clusterId = assigned.get(a.url) || articleHash(a.url);
-    console.log(`archive: clustered ${legacy.length} legacy articles into stories`);
+  if (savedVersion !== CLUSTER_VERSION) {
+    // First run, or the scoring changed: cut the whole archive once.
+    for (const a of articles) if (a) a.clusterId = null;
+    const assigned = clusterAll(articles.filter((a) => a?.url));
+    for (const a of articles) if (a?.url) a.clusterId = assigned.get(a.url) || articleHash(a.url);
+    console.log(`archive: clustered ${articles.length} articles (version ${CLUSTER_VERSION})`);
     dirty = true;
+  } else {
+    const legacy = articles.filter((a) => a?.url && !a.clusterId);
+    if (legacy.length) {
+      const assigned = clusterAll(legacy);
+      for (const a of legacy) a.clusterId = assigned.get(a.url) || articleHash(a.url);
+      dirty = true;
+    }
   }
   if (dirty) save();
   stories = null;
@@ -55,7 +65,7 @@ function save() {
   try {
     fs.mkdirSync(DATA_DIR, { recursive: true });
     const tmp = `${FILE}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify({ updatedAt, articles }));
+    fs.writeFileSync(tmp, JSON.stringify({ updatedAt, clusterVersion: CLUSTER_VERSION, articles }));
     fs.renameSync(tmp, FILE);
     dirty = false;
   } catch (e) {
