@@ -115,8 +115,10 @@ function StatsRail({ articles, days, onDay }) {
         <details className="mt-3 border-t border-line pt-3 text-xs text-muted">
           <summary className="cursor-pointer font-medium text-ink">How lean labels work</summary>
           <p className="mt-2 leading-relaxed">
-            Each outlet gets a general editorial-lean rating (left, center-left, center, center-right, right).
-            It is a guide to the publication, not a judgement on any single story. Every story links straight to its publisher.
+            Each outlet gets a general editorial-lean rating (left, center-left, center, center-right, right), a
+            factuality rating and an ownership entry. Ratings are compiled from AllSides, Ad Fontes Media and
+            Media Bias/Fact Check, plus publisher disclosures for outlets those providers do not cover. They describe
+            the publication, not any single story, and every story links straight to its publisher.
           </p>
         </details>
       </section>

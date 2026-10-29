@@ -7,7 +7,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { fetchAll } from './fetcher.js';
 import { CATEGORIES, FEEDS } from './feeds.js';
-import { LEANS, LEAN_BUCKETS, SOURCE_META, bucketCountsOf } from './bias.js';
+import {
+  LEANS, LEAN_BUCKETS, SOURCE_META, bucketCountsOf, RATING_PROVIDERS, FACTUALITY, OWNER_TYPES,
+} from './bias.js';
 import { loadArchive, mergeIntoStore, snapshot, daysAvailable, dayIn } from './store.js';
 import { ogImage } from './images.js';
 import { cutWords } from './text.js';
@@ -89,6 +91,9 @@ app.get('/api/meta', (_req, res) => {
     categories: CATEGORIES,
     leans: LEANS,
     leanBuckets: LEAN_BUCKETS,
+    factuality: FACTUALITY,
+    ownerTypes: OWNER_TYPES,
+    ratingProviders: RATING_PROVIDERS,
     sources: [...sources].sort(),
     sourceMeta: SOURCE_META,
     apiSources: [

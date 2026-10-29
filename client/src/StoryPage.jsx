@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from './router.jsx';
 import {
   api, ago, full, BiasChip, CoverageBar, bucketCounts, coverageLabel,
-  outlets, Image, Card, BUCKETS,
+  outlets, Image, Card, BUCKETS, useMeta, sourceInfo, FACTUALITY_LABEL, OWNER_LABEL, providerNames,
 } from './ui.jsx';
 
-function CoveragePanel({ a }) {
+function CoveragePanel({ a, meta }) {
   const counts = useMemo(() => bucketCounts(a), [a]);
   const list = outlets(a);
+  const cited = new Set(list.flatMap((o) => sourceInfo(meta, o.source).ratings || []));
   return (
     <div className="rounded-2xl border border-line bg-surface p-5">
       <div className="flex items-baseline justify-between gap-2">
@@ -21,6 +22,11 @@ function CoveragePanel({ a }) {
           <li key={`${o.source}-${i}`} className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <span className="block truncate text-sm font-semibold">{o.source}</span>
+              <span className="block truncate text-[11px] text-muted">
+                {sourceInfo(meta, o.source).ownership?.parent || 'Unknown owner'}
+                {' · '}{OWNER_LABEL[sourceInfo(meta, o.source).ownership?.type] || 'Unknown'}
+                {' · Factuality: '}{FACTUALITY_LABEL[sourceInfo(meta, o.source).factuality] || 'Unrated'}
+              </span>
               <span className="text-[11px] text-muted">
                 {i === 0 ? 'This story' : ago(o.publishedAt)}
               </span>
@@ -42,13 +48,15 @@ function CoveragePanel({ a }) {
         ))}
       </div>
       <p className="mt-3 text-[11px] leading-relaxed text-muted">
-        Lean labels describe a publication’s general editorial stance and are indicative, not a verdict on this article.
+        Lean and factuality are indicative publication-level ratings, not a verdict on this article.
+        {cited.size > 0 && <> Compiled from {providerNames(meta, [...cited])}; ownership from publisher disclosures.</>}
       </p>
     </div>
   );
 }
 
 export default function StoryPage({ id }) {
+  const meta = useMeta();
   const [status, setStatus] = useState('loading');
   const [story, setStory] = useState(null);
   const [related, setRelated] = useState([]);
@@ -187,7 +195,7 @@ export default function StoryPage({ id }) {
         </article>
 
         <aside className="lg:sticky lg:top-24 lg:self-start">
-          <CoveragePanel a={a} />
+          <CoveragePanel a={a} meta={meta} />
         </aside>
       </div>
 

@@ -55,6 +55,25 @@ export function BiasChip({ lean, className = '' }) {
   );
 }
 
+// Publisher metadata (lean, factuality, ownership) is fetched once and shared.
+let metaPromise = null;
+export const getMeta = () => {
+  if (!metaPromise) metaPromise = fetch('/api/meta').then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
+  return metaPromise;
+};
+export function useMeta() {
+  const [meta, setMeta] = useState(null);
+  useEffect(() => { let live = true; getMeta().then((m) => live && setMeta(m)); return () => { live = false; }; }, []);
+  return meta;
+}
+export const sourceInfo = (meta, source) => meta?.sourceMeta?.[source] || {
+  lean: 'unrated', factuality: 'unknown', ownership: { parent: 'Unknown', type: 'independent' }, ratings: [],
+};
+export const FACTUALITY_LABEL = { high: 'High', mixed: 'Mixed', low: 'Low', unknown: 'Unrated' };
+export const OWNER_LABEL = { corporate: 'Corporate', govt: 'Public / state', independent: 'Independent', trust: 'Trust / nonprofit' };
+export const providerNames = (meta, keys = []) =>
+  keys.map((k) => meta?.ratingProviders?.[k]?.name).filter(Boolean).join(', ');
+
 export const outlets = (a) => [
   { source: a.source, url: a.url, lean: a.lean, title: a.title, publishedAt: a.publishedAt, author: a.author },
   ...(a.alsoReportedBy || []),
