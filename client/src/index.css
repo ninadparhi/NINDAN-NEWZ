@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --paper: 250 249 246;
+  --surface: 255 255 255;
+  --surface2: 244 243 239;
+  --ink: 20 24 31;
+  --muted: 107 114 128;
+  --line: 229 227 222;
+  --accent: 13 92 99;
+  --lean-left: 29 78 216;
+  --lean-center-left: 37 99 235;
+  --lean-center: 109 40 217;
+  --lean-center-right: 194 65 12;
+  --lean-right: 220 38 38;
+  --lean-none: 148 163 184;
+  color-scheme: light;
+}
+
+.dark {
+  --paper: 13 17 21;
+  --surface: 22 27 33;
+  --surface2: 32 38 46;
+  --ink: 232 234 237;
+  --muted: 148 158 170;
+  --line: 44 52 62;
+  --accent: 45 212 191;
+  --lean-left: 96 165 250;
+  --lean-center-left: 147 197 253;
+  --lean-center: 167 139 250;
+  --lean-center-right: 251 146 60;
+  --lean-right: 248 113 113;
+  --lean-none: 148 163 184;
+  color-scheme: dark;
+}
+
+@layer base {
+  html { -webkit-text-size-adjust: 100%; }
+  body { @apply font-sans antialiased; }
+  ::selection { @apply bg-accent/20; }
+  :focus-visible { @apply outline-none ring-2 ring-accent/50 ring-offset-2 ring-offset-paper; }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { scrollbar-width: none; }
+}
+
+@keyframes ticker-scroll { to { transform: translateX(-50%); } }
+.ticker { animation: ticker-scroll 90s linear infinite; }
+.ticker:hover { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) {
+  .ticker { animation: none; overflow-x: auto; }
+}
