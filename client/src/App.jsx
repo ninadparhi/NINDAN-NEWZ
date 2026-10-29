@@ -155,7 +155,7 @@ function StatsRail({ articles, days, onDay }) {
                 className="rounded-full border border-line px-2.5 py-1 text-[11px] font-medium text-muted transition-colors hover:border-accent hover:text-accent">
                 {dayLabel(d.date)} <span className="text-muted/70">{d.count}</span>
               </button>
-            ))}
+            ))
           </div>
         </section>
       )}
@@ -276,7 +276,7 @@ function Home() {
           <main>
             {status === 'error' && (
               <div className="rounded-2xl border border-line bg-surface p-6 text-sm">
-                <p className="font-semibold">Couldn’t reach the news server.</p>
+                <p className="font-semibold">Couldn't reach the news server.</p>
                 <p className="mt-1 text-muted">Check that the backend is running on port 3001, then reload.</p>
               </div>
             )}
@@ -330,7 +330,7 @@ export default function App() {
           <Link href="/" className="flex items-center gap-2" aria-label="Dispatch home">
             <span className="grid h-8 w-8 place-items-center rounded-lg bg-ink font-head text-lg font-bold text-paper">D</span>
             <span className="font-head text-2xl font-bold tracking-tight">Dispatch</span>
-            <span className="hidden text-xs text-muted md:inline">India &amp; world, in context</span>
+            <span className="hidden text-xs text-muted md:inline">India & world, in context</span>
           </Link>
           <div className="ml-auto flex items-center gap-1">
             <Link href="/" className="rounded-lg px-3 py-1.5 text-sm font-medium text-muted transition-colors hover:bg-surface2 hover:text-ink">
@@ -343,6 +343,12 @@ export default function App() {
               ) : (
                 <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" /></svg>
               )}
+
+              <button onClick={() => setF({...f, blindspot: !f.blindspot})}
+                aria-label={f.blindspot ? 'Hide blindspot' : 'Show blindspot'}
+                className="rounded-lg px-3 py-1.5 text-sm font-medium text-muted transition-colors hover:bg-surface2 hover:text-ink"
+                title={f.blindspot ? 'Hide blindspot' : 'Show blindspot'}
+              >Blindspot</button>
             </button>
           </div>
         </div>
@@ -358,11 +364,11 @@ export default function App() {
           </div>
           <div>
             <p className="font-semibold text-ink">Content belongs to the respective publishers</p>
-            <p className="mt-1">We never reproduce full articles. Every card and story links to the original reporting on the publisher’s site.</p>
+            <p className="mt-1">We never reproduce full articles. Every card and story links to the original reporting on the publisher's site.</p>
           </div>
           <div>
             <p className="font-semibold text-ink">About lean labels</p>
-            <p className="mt-1">Left / center / right tags describe a publication’s general editorial stance. They are indicative and open to disagreement.</p>
+            <p className="mt-1">Left / center / right tags describe a publication's general editorial stance. They are indicative and open to disagreement.</p>
           </div>
         </div>
       </footer>

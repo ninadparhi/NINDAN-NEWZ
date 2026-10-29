@@ -97,6 +97,21 @@ export function dominantBucket(a) {
   return best;
 }
 
+export const leanGroup = (lean) => (lean === 'left' || lean === 'center-left' ? 'left'
+  : lean === 'right' || lean === 'center-right' ? 'right' : 'center');
+export const GROUPS = [
+  { key: 'left', label: 'Left', note: 'left + center-left', dot: 'bg-leanLeft' },
+  { key: 'center', label: 'Center', note: 'centre', dot: 'bg-leanCenter' },
+  { key: 'right', label: 'Right', note: 'center-right + right', dot: 'bg-leanRight' },
+];
+
+const STOP_WORDS = new Set('a an the and or but if of on in at to for from with by as is are was were be been being has have had will would can could should may might not no its it this that these those he she they them his her their we you our your i about after before during over under between against amid into out up down more most less than then so such also just now new news live update updates says said say told who what when where why how'.split(' '));
+export const titleWords = (title = '') => title.toLowerCase()
+  .replace(/[’']/g, '')
+  .replace(/[^a-z0-9]+/g, ' ')
+  .split(' ')
+  .filter((w) => w.length > 2 && !STOP_WORDS.has(w));
+
 export const coverageLabel = (b) => {
   const total = bucketTotal(b) - (b.unrated || 0);
   if (total <= 1) return 'Single-source story';

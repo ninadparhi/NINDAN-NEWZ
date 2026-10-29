@@ -127,6 +127,20 @@ export const leanGroup = (lean) =>
   lean === 'left' || lean === 'center-left' ? 'left'
   : lean === 'right' || lean === 'center-right' ? 'right' : 'center';
 
+// Blindspot: one lean group has <15% of coverage AND total sources >= 4
+export const isBlindspot = (counts) => {
+  const total = Object.values(counts).reduce((n, v) => n + v, 0);
+  if (total < 4) return false;
+  const left = (counts.left || 0) + (counts['center-left'] || 0);
+  const right = (counts.right || 0) + (counts['center-right'] || 0);
+  const center = (counts.center || 0);
+  const groups = { left, center, right };
+  for (const [key, n] of Object.entries(groups)) {
+    if (n > 0 && n / total < 0.15) return true;
+  }
+  return false;
+};
+
 export const factualityLabel = (f) =>
   ({ high: 'High', mixed: 'Mixed', low: 'Low', unknown: 'Unrated' }[f] || 'Unrated');
 
