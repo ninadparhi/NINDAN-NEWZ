@@ -2,6 +2,7 @@ import Parser from 'rss-parser';
 import crypto from 'crypto';
 import { FEEDS } from './feeds.js';
 import { biasOf } from './bias.js';
+import { excerpt, cutWords, sentences, stripHtml } from './text.js';
 
 const UA = 'NewsAggregator/1.0 (+headline aggregator; links to originals)';
 const parser = new Parser({
@@ -10,13 +11,11 @@ const parser = new Parser({
   customFields: { item: [['media:content', 'media'], ['media:thumbnail', 'thumb'], ['content:encoded', 'full']] },
 });
 
-const strip = (s = '') =>
-  s.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&quot;/g, '"')
-    .replace(/&#0?39;|&#8217;|&rsquo;/g, "'").replace(/\s+/g, ' ').trim();
-const clip = (s, n) => (s.length <= n ? s : s.slice(0, s.lastIndexOf(' ', n)) + '…');
-// Split on sentence ends only when followed by whitespace, so decimals like
-// "1.26 lakh" and abbreviations are not torn apart.
-const sentencesOf = (text) => text.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter((s) => s.length > 30);
+// Text helpers live in text.js: HTML + entity cleanup, sentence splitting that
+// keeps initials and abbreviations intact, and word-boundary cutting.
+const strip = stripHtml;
+const clip = cutWords;
+const sentencesOf = (text) => sentences(text).filter((s) => s.length > 30);
 const id = (url) => crypto.createHash('sha1').update(url).digest('hex').slice(0, 12);
 
 function pickImage(i) {
@@ -31,12 +30,15 @@ function normalize(i, feed) {
   if (!i.title || !i.link) return null;
   const time = new Date(i.isoDate || i.pubDate || Date.now());
   const sentences = sentencesOf(text);
+  const title = strip(i.title);
+  const summary = excerpt(base || text, 300);
   return {
     id: id(i.link),
-    title: strip(i.title),
-    summary: clip(base, 300),               // card: short excerpt only
-    detail: clip(text || base, 900),        // detail view: still an excerpt, never the full article
-    keyPoints: sentences.slice(0, 4).map((s) => clip(s, 200)),
+    title,
+    // Card teaser: whole sentences, so it never stops mid-word or mid-clause.
+    summary: summary.toLowerCase() === title.toLowerCase() ? '' : summary,
+    detail: excerpt(text || base, 900),     // detail view: still an excerpt, never the full article
+    keyPoints: sentences(text).filter((s) => s.length >= 40).slice(0, 4).map((s) => clip(s, 200)),
     image: pickImage(i),
     publishedAt: isNaN(time) ? new Date().toISOString() : time.toISOString(),
     category: feed.category, region: feed.region, source: feed.source,
@@ -60,7 +62,7 @@ async function fromGuardian(key) {
   const { response } = await (await fetch(u)).json();
   return (response?.results || []).map((r) => {
     const text = strip(r.fields?.trailText || '');
-    return { id: id(r.webUrl), title: r.webTitle, summary: clip(text, 300), detail: text,
+    return { id: id(r.webUrl), title: strip(r.webTitle), summary: excerpt(text, 300), detail: excerpt(text, 900),
       keyPoints: [], image: r.fields?.thumbnail || null, publishedAt: r.webPublicationDate,
       category: GSEC[r.sectionId] || 'Politics', region: 'world', source: 'The Guardian',
       author: r.fields?.byline || null, url: r.webUrl, ...biasOf('The Guardian'), alsoReportedBy: [] };
@@ -87,7 +89,7 @@ function apiArticle({ title, text, source, author, url, image, publishedAt, regi
   const time = new Date(publishedAt || Date.now());
   if (!title || !url) return null;
   return {
-    id: id(url), title: strip(title), summary: clip(clean, 300), detail: clip(clean, 900),
+    id: id(url), title: strip(title), summary: excerpt(clean, 300), detail: excerpt(clean, 900),
     keyPoints: sentencesOf(clean).slice(0, 4).map((s) => clip(s, 200)),
     image: image || null, publishedAt: isNaN(time) ? new Date().toISOString() : time.toISOString(),
     category, region, source, author: author || null, url, ...biasOf(source), alsoReportedBy: [],
