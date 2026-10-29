@@ -33,8 +33,14 @@ export function biasOf(source) {
   return SOURCE_META[source] || B('unrated', 'unknown', '');
 }
 
-// Buckets used by the coverage bar: left-ish, centrist, right-ish.
-export const leanBucket = (lean) =>
-  lean === 'left' || lean === 'center-left' ? 'left'
-  : lean === 'right' || lean === 'center-right' ? 'right'
-  : lean === 'unrated' ? 'unrated' : 'center';
+// The five lean levels are the ONLY buckets used by every bar, legend, chip and
+// summary in the app (plus 'unrated' for publishers we do not rate). Collapsing
+// center-left into "Left" is what used to make a chip disagree with a legend.
+export const LEAN_BUCKETS = [...LEANS, 'unrated'];
+export const leanBucket = (lean) => (LEANS.includes(lean) ? lean : 'unrated');
+export const emptyBuckets = () => Object.fromEntries(LEAN_BUCKETS.map((k) => [k, 0]));
+export function bucketCountsOf(sources) {
+  const out = emptyBuckets();
+  for (const s of sources) out[leanBucket(s.lean)] += 1;
+  return out;
+}

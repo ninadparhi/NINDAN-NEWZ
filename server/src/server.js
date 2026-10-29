@@ -7,7 +7,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { fetchAll } from './fetcher.js';
 import { CATEGORIES, FEEDS } from './feeds.js';
-import { LEANS, SOURCE_META, leanBucket } from './bias.js';
+import { LEANS, LEAN_BUCKETS, SOURCE_META, bucketCountsOf } from './bias.js';
 import { loadArchive, mergeIntoStore, snapshot, daysAvailable, dayIn } from './store.js';
 
 const app = express();
@@ -86,6 +86,7 @@ app.get('/api/meta', (_req, res) => {
   res.json({
     categories: CATEGORIES,
     leans: LEANS,
+    leanBuckets: LEAN_BUCKETS,
     sources: [...sources].sort(),
     sourceMeta: SOURCE_META,
     apiSources: [
@@ -109,9 +110,7 @@ app.get('/api/*', (_req, res) => res.status(404).json({ error: 'Unknown API rout
 app.get('*', (_req, res, next) => res.sendFile(path.join(dist, 'index.html'), (e) => e && next()));
 
 function coverageBuckets(a) {
-  const buckets = { left: 0, center: 0, right: 0, unrated: 0 };
-  for (const o of [a, ...a.alsoReportedBy]) buckets[leanBucket(o.lean)]++;
-  return buckets;
+  return bucketCountsOf([a, ...a.alsoReportedBy]);
 }
 
 app.listen(PORT, () => console.log(`API on :${PORT}`));

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  api, dayLabel, localDay, Card, CoverageBar, bucketCounts, BUCKETS, BiasChip, leanInfo,
+  api, dayLabel, localDay, Card, CoverageBar, bucketCounts, bucketTotal, emptyCounts,
+  BUCKETS, BiasChip, leanInfo,
 } from './ui.jsx';
 import StoryPage from './StoryPage.jsx';
 import { Link, usePath } from './router.jsx';
@@ -68,20 +69,20 @@ function StatsRail({ articles, days, onDay }) {
       const b = bucketCounts(a);
       for (const k of Object.keys(acc)) acc[k] += b[k];
       return acc;
-    }, { left: 0, center: 0, right: 0, unrated: 0 }),
+    }, emptyCounts()),
     [articles],
   );
   const mostCovered = useMemo(
     () => [...articles].sort((a, b) => (b.alsoReportedBy.length - a.alsoReportedBy.length)).filter((a) => a.alsoReportedBy.length).slice(0, 4),
     [articles],
   );
-  const total = mix.left + mix.center + mix.right + mix.unrated;
+  const total = bucketTotal(mix);
 
   return (
     <div className="space-y-5">
       <section className="rounded-2xl border border-line bg-surface p-5">
         <h2 className="font-head text-lg font-bold">Coverage mix</h2>
-        <p className="mt-1 text-xs text-muted">Where the publishers in this feed sit editorially.</p>
+        <p className="mt-1 text-xs text-muted">Editorial lean of the outlets covering these stories.</p>
         <CoverageBar counts={mix} className="mt-3 h-2" />
         <div className="mt-3 space-y-1.5">
           {BUCKETS.filter((b) => mix[b.key]).map((b) => (

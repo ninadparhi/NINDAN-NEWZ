@@ -31,12 +31,19 @@ export const LEANS = {
 };
 export const leanInfo = (lean) => LEANS[lean] || LEANS.unrated;
 
+// Mirror of LEAN_BUCKETS in server/src/bias.js. Every chip, legend, bar and
+// summary reads from this list so the five levels never disagree.
 export const BUCKETS = [
-  { key: 'left', label: 'Left', className: 'bg-leanLeft' },
-  { key: 'center', label: 'Center', className: 'bg-leanCenter' },
-  { key: 'right', label: 'Right', className: 'bg-leanRight' },
-  { key: 'unrated', label: 'Unrated', className: 'bg-leanNone' },
+  { key: 'left', label: 'Left', className: 'bg-leanLeft', text: 'text-leanLeft' },
+  { key: 'center-left', label: 'Center-left', className: 'bg-leanCenterLeft', text: 'text-leanCenterLeft' },
+  { key: 'center', label: 'Center', className: 'bg-leanCenter', text: 'text-leanCenter' },
+  { key: 'center-right', label: 'Center-right', className: 'bg-leanCenterRight', text: 'text-leanCenterRight' },
+  { key: 'right', label: 'Right', className: 'bg-leanRight', text: 'text-leanRight' },
+  { key: 'unrated', label: 'Unrated', className: 'bg-leanNone', text: 'text-muted' },
 ];
+export const RATED_BUCKETS = BUCKETS.filter((b) => b.key !== 'unrated');
+export const bucketOf = (lean) => (LEANS[lean] && lean !== 'unrated' ? LEANS[lean] : LEANS.unrated);
+export const emptyCounts = () => Object.fromEntries(BUCKETS.map((b) => [b.key, 0]));
 
 export function BiasChip({ lean, className = '' }) {
   const info = leanInfo(lean);
@@ -54,20 +61,34 @@ export const outlets = (a) => [
 ];
 
 export const bucketCounts = (a) => {
-  const out = { left: 0, center: 0, right: 0, unrated: 0 };
-  for (const o of outlets(a)) {
-    const lean = o.lean || 'unrated';
-    out[lean === 'left' || lean === 'center-left' ? 'left' : lean === 'right' || lean === 'center-right' ? 'right' : lean] += 1;
-  }
+  const out = emptyCounts();
+  for (const o of outlets(a)) out[LEANS[o.lean] ? o.lean : 'unrated'] += 1;
   return out;
 };
+export const bucketTotal = (b) => BUCKETS.reduce((n, x) => n + (b[x.key] || 0), 0);
+
+// The bucket with the most outlets; ties go to the primary source's own lean.
+export function dominantBucket(a) {
+  const counts = bucketCounts(a);
+  let best = bucketOf(a.lean);
+  let n = -1;
+  for (const b of RATED_BUCKETS) {
+    if ((counts[b.key] || 0) > n) { n = counts[b.key] || 0; best = b; }
+  }
+  return best;
+}
 
 export const coverageLabel = (b) => {
-  const total = b.left + b.center + b.right;
+  const total = bucketTotal(b) - (b.unrated || 0);
   if (total <= 1) return 'Single-source story';
-  if (b.left && !b.right && !b.center) return 'Left-only coverage';
-  if (b.right && !b.left && !b.center) return 'Right-only coverage';
-  if (b.left && b.right) return 'Balanced across left and right';
+  const sums = {
+    Left: (b.left || 0) + (b['center-left'] || 0),
+    Center: b.center || 0,
+    Right: (b.right || 0) + (b['center-right'] || 0),
+  };
+  const present = Object.keys(sums).filter((g) => sums[g]);
+  if (present.length === 1) return `${present[0]}-only coverage`;
+  if (sums.Left && sums.Right) return 'Coverage spans left and right';
   return 'Mostly centrist coverage';
 };
 
