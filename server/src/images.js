@@ -78,3 +78,28 @@ export async function ogImage(url) {
   cache.set(url, { image, at: Date.now() - (image ? 0 : TTL - 6 * 36e5) });
   return image;
 }
+
+// ------------------------------------------------------------ placeholders
+//
+// Last resort for a card with no picture anywhere: a stable Unsplash news
+// photograph chosen by section. The ids are fixed, so the same section always
+// looks the same and nothing is fetched from a randomiser on every render.
+const unsplash = (id) => `https://images.unsplash.com/${id}?auto=format&fit=crop&w=960&q=65`;
+
+const CATEGORY_IMAGES = {
+  Politics: unsplash('photo-1529107386315-e1a2ed48a620'),
+  Business: unsplash('photo-1611974789855-9c2a0a7236a3'),
+  Technology: unsplash('photo-1518770660439-4636190af475'),
+  Science: unsplash('photo-1507413245164-6160d8298b31'),
+  Health: unsplash('photo-1576091160399-112ba8d25d1d'),
+  Sports: unsplash('photo-1461896836934-ffe607ba8211'),
+  Entertainment: unsplash('photo-1489599849927-2ee91cede3ba'),
+  World: unsplash('photo-1526778548025-fa2f459cd5c1'),
+  India: unsplash('photo-1524492412937-b28074a5d7da'),
+};
+
+const DEFAULT_IMAGE = unsplash('photo-1495020689067-958852a7765e');
+
+export const PLACEHOLDER_IMAGES = Object.freeze({ ...CATEGORY_IMAGES, default: DEFAULT_IMAGE });
+
+export const placeholderImage = (category) => CATEGORY_IMAGES[category] || DEFAULT_IMAGE;

@@ -1,0 +1,8 @@
+
+> start
+> node src/server.js
+
+archive: 1772 articles loaded
+API on :3001
+refreshed: 1607 stories, 1521 archived
+precomputed: 40 story analyses

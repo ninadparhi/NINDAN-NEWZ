@@ -8,11 +8,17 @@ import { fileURLToPath } from 'url';
 import { fetchAll } from './fetcher.js';
 import { CATEGORIES, FEEDS } from './feeds.js';
 import {
-  LEANS, LEAN_BUCKETS, SOURCE_META, bucketCountsOf, RATING_PROVIDERS, FACTUALITY, OWNER_TYPES,
+  LEANS, LEAN_BUCKETS, bucketCountsOf, RATING_PROVIDERS, FACTUALITY, OWNER_TYPES, isBlindspot, sourceDirectory,
 } from './bias.js';
 import { loadArchive, mergeIntoStore, snapshot, daysAvailable, dayIn } from './store.js';
-import { ogImage } from './images.js';
+import { ogImage, placeholderImage } from './images.js';
 import { cutWords } from './text.js';
+import { analyzeArticle } from './analyze.js';
+import { framingOf } from './framing.js';
+import { stakeholderOf } from './stakeholders.js';
+import { trendingTopics } from './topics.js';
+import { llmStatus } from './llm.js';
+import { precomputeAnalyses } from './precompute.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -27,7 +33,14 @@ async function refresh() {
   busy = true;
   try {
     const articles = await fetchAll();
-    if (articles.length) mergeIntoStore(articles); // archive keeps last good data on failure
+    if (articles.length) {
+      mergeIntoStore(articles); // archive keeps last good data on failure
+      // Score new stories once, off the request path, and persist the result.
+      const max = Math.max(0, Number(process.env.PRECOMPUTE_MAX) || 40);
+      precomputeAnalyses({ limit: max })
+        .then(({ processed }) => processed && console.log(`precomputed: ${processed} story analyses`))
+        .catch((e) => console.warn('precompute failed:', e.message));
+    }
     console.log(`refreshed: ${articles.length} stories, ${snapshot().articles.length} archived`);
     if (!articles.length) scheduleRetry();
   } catch (e) {
@@ -41,15 +54,45 @@ function scheduleRetry() {
   retry = setTimeout(refresh, 60000);
 }
 refresh();
+// Score whatever the restored archive is still missing, then keep it topped up
+// on each refresh.
+precomputeAnalyses({ limit: Math.max(0, Number(process.env.PRECOMPUTE_MAX) || 40) }).catch(() => {});
 cron.schedule(`*/${EVERY} * * * *`, refresh);
 
 app.use(compression());
 app.use(cors(process.env.CLIENT_ORIGIN ? { origin: process.env.CLIENT_ORIGIN } : {}));
+app.use(express.json({ limit: '1mb' }));
 
 const tzOf = (q) => {
   const n = Number(q);
   return Number.isFinite(n) ? Math.max(-840, Math.min(840, n)) : 0;
 };
+
+// Feed picture first, then a category placeholder. The client only asks
+// /api/image for a publisher's og:image when it gets a placeholder, so a page
+// load never waits on dozens of publisher requests.
+function imageFields(a) {
+  if (a.image) return { image: a.image, imageUrl: a.image, imageSource: 'feed' };
+  return { imageUrl: placeholderImage(a.category), imageSource: 'placeholder' };
+}
+
+// Cards receive the analysis summary (no text or highlight list) so the feed
+// payload stays small while the scores are already precomputed.
+function analysisBrief(a) {
+  const x = a.analysis;
+  if (!x) return null;
+  return {
+    bias: x.bias,
+    biasRating: x.biasRating,
+    biasPercentage: x.biasPercentage,
+    biasRationale: x.biasRationale,
+    simpleSummary: x.simpleSummary,
+    keyTopics: x.keyTopics,
+    method: x.method,
+    engine: x.engine,
+    analyzedAt: x.analyzedAt,
+  };
+}
 
 app.get('/api/news', (req, res) => {
   const { region, category, source, date, q, limit = 60, offset = 0 } = req.query;
@@ -60,23 +103,36 @@ app.get('/api/news', (req, res) => {
     (!region || a.region === region) && (!category || a.category === category) &&
     (!source || a.source === source || a.alsoReportedBy.some((x) => x.source === source)) &&
     (!date || dayIn(a.publishedAt, tz) === date) &&
-    (!needle || `${a.title} ${a.summary} ${a.source}`.toLowerCase().includes(needle)));
+    (!needle || `${a.title} ${a.summary} ${a.detail || ''} ${a.source}`.toLowerCase().includes(needle)));
   res.set('Cache-Control', 'public, max-age=120');
   res.json({
     updatedAt,
     total: rows.length,
-    articles: rows.slice(+offset, +offset + +limit).map((a) => ({
-      ...a,
-      coverage: 1 + a.alsoReportedBy.length,
-      coverageBuckets: coverageBuckets(a),
-    })),
+    articles: rows.slice(+offset, +offset + +limit).map((a) => {
+      const coverageBuckets = bucketCountsOf([a, ...a.alsoReportedBy]);
+      return {
+        ...a,
+        ...imageFields(a),
+        analysis: analysisBrief(a),
+        coverage: 1 + a.alsoReportedBy.length,
+        coverageBuckets,
+        blindspot: isBlindspot(coverageBuckets),
+      };
+    }),
   });
 });
 
 app.get('/api/news/:id', (req, res) => {
   const a = snapshot().articles.find((x) => x.id === req.params.id);
   if (!a) return res.status(404).json({ error: 'Not found' });
-  res.json({ ...a, coverage: 1 + a.alsoReportedBy.length, coverageBuckets: coverageBuckets(a) });
+  const coverageBuckets = bucketCountsOf([a, ...a.alsoReportedBy]);
+  res.json({
+    ...a,
+    ...imageFields(a),
+    coverage: 1 + a.alsoReportedBy.length,
+    coverageBuckets,
+    blindspot: isBlindspot(coverageBuckets),
+  });
 });
 
 app.get('/api/days', (req, res) => {
@@ -95,7 +151,7 @@ app.get('/api/meta', (_req, res) => {
     ownerTypes: OWNER_TYPES,
     ratingProviders: RATING_PROVIDERS,
     sources: [...sources].sort(),
-    sourceMeta: SOURCE_META,
+    sourceMeta: sourceDirectory(),
     apiSources: [
       process.env.NEWSAPI_KEY && 'NewsAPI',
       process.env.GNEWS_API_KEY && 'GNews',
@@ -104,7 +160,102 @@ app.get('/api/meta', (_req, res) => {
     ].filter(Boolean),
     feedCount: FEEDS.length,
     updatedAt: snapshot().updatedAt,
+    analysis: llmStatus(),
   });
+});
+
+// ---- NINDAN-NEWZ 2.0: framing, ownership and analysis ---------------------
+
+// The analysis endpoint costs an LLM call, so it is budgeted per IP rather than
+// openly available. The window is deliberately short: a reader opens a handful
+// of stories, not a crawler.
+const ANALYZE_WINDOW = 5 * 60e3;
+const ANALYZE_MAX = Math.max(1, +process.env.ANALYZE_RATE_MAX || 20);
+const analyzeHits = new Map();
+
+function overBudget(ip) {
+  const now = Date.now();
+  const recent = (analyzeHits.get(ip) || []).filter((t) => now - t < ANALYZE_WINDOW);
+  if (recent.length >= ANALYZE_MAX) {
+    analyzeHits.set(ip, recent);
+    return Math.ceil((ANALYZE_WINDOW - (now - recent[0])) / 1000);
+  }
+  recent.push(now);
+  analyzeHits.set(ip, recent);
+  if (analyzeHits.size > 5000) analyzeHits.clear();
+  return 0;
+}
+
+// Accepts either raw text or an article URL. Without an LLM key (or when the
+// provider rate-limits us) the response is still a usable analysis, marked
+// `degraded` with a `reason` the UI shows.
+app.post('/api/analyze-article', async (req, res) => {
+  const wait = overBudget(req.ip || 'unknown');
+  if (wait) {
+    res.set('Retry-After', String(wait));
+    return res.status(429).json({ error: 'Analysis rate limit reached. Try again shortly.', retryAfter: wait });
+  }
+  const { url, text, title, source, category, fallbackText } = req.body || {};
+  if (!url && !text) return res.status(400).json({ error: 'Send either raw article text or an http(s) url' });
+  try {
+    const result = await analyzeArticle({
+      url, text, title, source, category, fallbackText, force: req.body?.force === true,
+    });
+    res.set('Cache-Control', 'no-store');
+    res.json(result);
+  } catch (e) {
+    res.status(e.status || 502).json({ error: e.message || 'Analysis failed' });
+  }
+});
+
+// Trending = clusters that more than one outlet actually carried, ranked by
+// breadth. This is the dashboard's "Bias Spectrum Bar" feed.
+app.get('/api/trending', (req, res) => {
+  const limit = Math.min(40, Math.max(1, +req.query.limit || 12));
+  const { articles, updatedAt } = snapshot();
+  const clusters = articles
+    .filter((a) => a.alsoReportedBy?.length)
+    .sort((a, b) => (b.alsoReportedBy.length - a.alsoReportedBy.length)
+      || (new Date(b.latestAt) - new Date(a.latestAt)))
+    .slice(0, limit)
+    .map((a) => {
+      const coverageBuckets = bucketCountsOf([a, ...a.alsoReportedBy]);
+      return {
+        id: a.id, title: a.title, summary: a.summary, detail: a.detail,
+        source: a.source, url: a.url, lean: a.lean, ...imageFields(a),
+        category: a.category, region: a.region, publishedAt: a.publishedAt,
+        latestAt: a.latestAt, coverage: 1 + a.alsoReportedBy.length,
+        sourceBreakdown: a.sourceBreakdown || null,
+        sourceCounts: a.sourceCounts || null,
+        analysis: analysisBrief(a),
+        coverageBuckets, blindspot: isBlindspot(coverageBuckets),
+      };
+    });
+  res.set('Cache-Control', 'public, max-age=120');
+  res.json({ updatedAt, clusters });
+});
+
+// Trending topics for the ticker strip. Weighted by coverage breadth, so a
+// subject only trends when more than one newsroom is carrying it.
+app.get('/api/topics', (req, res) => {
+  const limit = Math.min(30, Math.max(1, +req.query.limit || 14));
+  res.set('Cache-Control', 'public, max-age=300');
+  res.json({ topics: trendingTopics(snapshot().articles, limit) });
+});
+
+// Comparative headlines for one story, grouped by the lean of each outlet.
+app.get('/api/framing/:id', (req, res) => {
+  const story = snapshot().articles.find((a) => a.id === req.params.id);
+  if (!story) return res.status(404).json({ error: 'Story not found' });
+  res.set('Cache-Control', 'public, max-age=120');
+  res.json(framingOf(story));
+});
+
+// Ownership graph behind the Global Framing drawer. Unknown publications still
+// get a record, flagged `known: false`, so the drawer never breaks.
+app.get('/api/stakeholder/:source', (req, res) => {
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.json(stakeholderOf(req.params.source));
 });
 
 // Lazy og:image lookup for cards whose feed item had no picture. The result is
@@ -147,11 +298,26 @@ app.get('/api/breaking', (_req, res) => {
   res.json(picked);
 });
 
-// Serve the built client in production (single-service deploy, e.g. Render)
-const dist = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../client/dist');
-app.use(express.static(dist, { maxAge: '1h', index: false }));
+// NINDAN-NEWZ 2.0 client. It lives in this repo and needs no build step, so the
+// API and the UI deploy as one service.
+const client = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'client');
+// A browser can hold a cached client module after the shell that loads it has
+// already updated (which is how /api.js without `topics()` survived a deploy).
+// JS, CSS and HTML therefore revalidate on every load instead of trusting a TTL.
+app.use(express.static(client, {
+  maxAge: '1h',
+  index: false,
+  setHeaders: (res, filePath) => {
+    if (/\.(?:js|css|html)$/i.test(filePath)) res.setHeader('Cache-Control', 'no-cache');
+  },
+}));
 app.get('/api/*', (_req, res) => res.status(404).json({ error: 'Unknown API route' }));
-app.get('*', (_req, res, next) => res.sendFile(path.join(dist, 'index.html'), (e) => e && next()));
+app.get('*', (_req, res, next) => {
+  // The shell must always be revalidated, so a new build is picked up on a
+  // normal reload rather than held by a proxy or the browser cache.
+  res.setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(client, 'index.html'), (e) => e && next());
+});
 
 function coverageBuckets(a) {
   return bucketCountsOf([a, ...a.alsoReportedBy]);

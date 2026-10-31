@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NINDAN-NEWZ 2.0 — the news, with the framing exposed</title>
+    <meta
+      name="description"
+      content="NINDAN-NEWZ 2.0 clusters coverage across the political spectrum and annotates the framing sentence by sentence."
+    />
+    <link rel="preload" href="/fonts/libre-caslon-display.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preconnect" href="https://images.unsplash.com" />
+    <link rel="stylesheet" href="https://use.hugeicons.com/font/icons.css" />
+    <link rel="stylesheet" href="/styles.css?v=6" />
+    <script type="module" src="/app.js?v=6"></script>
+  </head>
+  <body>
+    <a class="skip" href="#view">Skip to content</a>
+
+    <header class="topbar">
+      <div class="topbar-inner">
+        <a class="brand" href="#/" aria-label="NINDAN-NEWZ home">
+          <span class="brand-name">NINDAN-NEWZ</span>
+          <span class="brand-edition">2.0</span>
+        </a>
+        <nav class="topnav" aria-label="Primary">
+          <button class="ghost" id="consensus-toggle" aria-pressed="false">Neutral consensus</button>
+          <button class="ghost" id="theme-toggle" aria-label="Switch colour theme"></button>
+          <button class="primary" id="balance-open">
+            <i class="hgi-stroke hgi-chart" aria-hidden="true"></i>
+            <span>Balance</span>
+          </button>
+        </nav>
+      </div>
+    </header>
+
+    <main id="view" tabindex="-1"></main>
+
+    <div id="tooltip" role="tooltip" hidden></div>
+
+    <div id="scrim" class="scrim"></div>
+
+    <aside id="drawer" class="drawer" aria-hidden="true" aria-labelledby="drawer-title">
+      <div class="drawer-head">
+        <h2 id="drawer-title">Global framing</h2>
+        <button class="ghost icon" id="drawer-close">
+          <i class="hgi-stroke hgi-cancel-01" aria-hidden="true"></i>
+          <span class="sr-only">Close framing drawer</span>
+        </button>
+      </div>
+      <div id="drawer-body" class="drawer-body"></div>
+    </aside>
+
+    <div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-card">
+        <button class="ghost icon modal-close" id="modal-close">
+          <i class="hgi-stroke hgi-cancel-01" aria-hidden="true"></i>
+          <span class="sr-only">Close</span>
+        </button>
+        <div id="modal-body"></div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

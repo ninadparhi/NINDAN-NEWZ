@@ -1,0 +1,144 @@
+// Target database schema for NINDAN-NEWZ 2.0.
+//
+// The running server still keeps its archive in data/archive.json (see
+// src/store.js); this schema is the Postgres target for the migration described
+// in the README, so the API shape above and the database agree on names.
+//
+//   npx prisma migrate dev --name init
+//   DATABASE_URL=postgresql://… npx prisma generate
+//
+// pgvector: `Article.embedding` is intentionally left out until the extension is
+// enabled on the target database. Once it is, add
+//   extensions = [vector] (preview feature postgresqlExtensions)
+// and a column `embedding Unsupported("vector(1536)")?` for semantic clustering.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum BiasRating {
+  LEFT
+  LEAN_LEFT
+  CENTER
+  LEAN_RIGHT
+  RIGHT
+  UNRATED
+}
+
+enum FactualRating {
+  HIGH
+  MIXED
+  LOW
+  UNKNOWN
+}
+
+enum FundingType {
+  PRIVATE
+  STATE_BACKED
+  VC
+  PUBLIC
+}
+
+model Article {
+  id              String           @id @default(cuid())
+  title           String
+  url             String           @unique
+  content         String           @db.Text
+  source          String
+  publicationDate DateTime
+  clusterId       String?
+  biasRating      BiasRating       @default(UNRATED)
+  factualRating   FactualRating    @default(UNKNOWN)
+  summary         String?          @db.Text
+  // Plain-language 2-3 sentence context shown above the reader text.
+  simpleSummary   String?          @db.Text
+  image           String?
+  // Canonical card image: the feed's picture, else the publisher's og:image,
+  // else a category placeholder. See src/images.js.
+  imageUrl        String?
+  // { leftCount, centerCount, rightCount, untrackedCount, totalSources }
+  sourceBreakdown Json?
+  biasRationale   Json?
+  lastUpdatedTime DateTime?
+  sourceId        String?
+  sourceRef       Source?          @relation(fields: [sourceId], references: [id])
+  lean            String?
+  category        String?
+  region          String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  spin            LinguisticSpin[]
+
+  @@index([clusterId])
+  @@index([source])
+  @@index([sourceId])
+  @@index([publicationDate])
+}
+
+model LinguisticSpin {
+  id              String   @id @default(cuid())
+  articleId       String
+  sentenceText    String   @db.Text
+  startIndex      Int
+  endIndex        Int
+  valenceScore    Float
+  explanationTag  String
+  explanation     String?  @db.Text
+  createdAt       DateTime @default(now())
+
+  article         Article  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@index([articleId])
+  @@index([explanationTag])
+}
+
+model Source {
+  id            String        @id @default(cuid())
+  name          String        @unique
+  domain        String?       @unique
+  logoUrl       String?
+  country       String?
+  primaryBias   BiasRating    @default(UNRATED)
+  untrackedBias Boolean       @default(false)
+  ownershipData Json?
+  factualRating FactualRating @default(UNKNOWN)
+  isStateBacked Boolean       @default(false)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  articles      Article[]
+
+  @@index([primaryBias])
+  @@index([country])
+}
+
+// One row per clustered story. The runtime equivalent lives in data/archive.json
+// (sourceCounts, neutralFacts and the precomputed analysis).
+model StoryCluster {
+  id               String   @id @default(cuid())
+  clusterKey       String   @unique
+  title            String
+  sourceCounts     Json
+  breakingNewsMeta Json?
+  neutralFacts     Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model MediaStakeholder {
+  id              String     @id @default(cuid())
+  publicationName String     @unique
+  parentCompany   String
+  majorFunders    String[]
+  fundingType     FundingType @default(PRIVATE)
+  nonprofit       Boolean    @default(false)
+  ownershipChain  String[]
+  note            String?    @db.Text
+  updatedAt       DateTime   @updatedAt
+}

@@ -5,6 +5,8 @@
 // providers (and, for smaller Indian outlets, from the publication's own
 // disclosures), not a verdict on any single article. Every entry keeps the
 // providers it draws on in `ratings`, and the UI attributes them.
+import { domainOf, logoUrlFor, profileOf, sourceForHost } from './sources.js';
+
 export const LEANS = ['left', 'center-left', 'center', 'center-right', 'right'];
 export const FACTUALITY = ['high', 'mixed', 'low', 'unknown'];
 export const OWNER_TYPES = ['corporate', 'govt', 'independent', 'trust'];
@@ -52,6 +54,17 @@ export const SOURCE_META = {
   OpIndia: S('right', 'mixed', 'IN', 'Defence Media Network', 'independent', ['mbfc', 'disclosure']),
   Organiser: S('right', 'mixed', 'IN', 'Rashtriya Swayamsevak Sangh', 'independent', ['disclosure']),
   Swarajya: S('right', 'mixed', 'IN', 'Swarajya Publications', 'independent', ['mbfc', 'disclosure']),
+
+  'Washington Post': S('center-left', 'high', 'US', 'Nash Holdings (Jeff Bezos)', 'corporate', ['allsides', 'adfontes']),
+  'Financial Times': S('center', 'high', 'GB', 'Nikkei Inc.', 'corporate', ['adfontes', 'mbfc']),
+
+  // ---- India: added for domain resolution ----
+  News18: S('center-right', 'mixed', 'IN', 'Network18 (Reliance Industries)', 'corporate', ['mbfc', 'disclosure']),
+  ThePrint: S('center', 'high', 'IN', 'ThePrint (independent)', 'independent', ['disclosure']),
+  'The Wire': S('left', 'mixed', 'IN', 'Foundation for Independent Journalism', 'trust', ['disclosure']),
+  Scroll: S('center-left', 'mixed', 'IN', 'Scroll Media', 'independent', ['disclosure']),
+  Firstpost: S('center-right', 'mixed', 'IN', 'Network18 (Reliance Industries)', 'corporate', ['disclosure']),
+  'Business Standard': S('center-right', 'high', 'IN', 'Business Standard Ltd', 'corporate', ['disclosure']),
 
   // ---- Wire services / APIs ----
   PTI: S('center', 'high', 'IN', 'Press Trust of India (cooperative)', 'trust', ['disclosure']),
@@ -126,6 +139,88 @@ export function bucketCountsOf(sources) {
 export const leanGroup = (lean) =>
   lean === 'left' || lean === 'center-left' ? 'left'
   : lean === 'right' || lean === 'center-right' ? 'right' : 'center';
+
+// Resolve an archived article to the outlet that actually published it: the
+// feed's own name when it is rated, otherwise the publication behind its URL.
+// This is what keeps aggregator names ("NewsAPI") from becoming untracked.
+export function resolveSource(row = {}) {
+  const known = biasOf(row.source);
+  const host = domainOf(row.url);
+  const mapped = sourceForHost(host);
+  const source = known.lean !== 'unrated' ? row.source : (mapped || row.source || 'Unknown');
+  const base = biasOf(source);
+  const lean = base.lean !== 'unrated' ? base.lean : (row.lean || 'unrated');
+  const profile = profileOf(source);
+  const domain = profile?.domain || host || '';
+  return {
+    source,
+    lean,
+    country: base.country || profile?.country || row.country || '',
+    factuality: base.factuality || 'unknown',
+    ownership: base.ownership || { parent: 'Unknown', type: 'independent' },
+    domain,
+    logoUrl: logoUrlFor(domain),
+    tracked: lean !== 'unrated',
+  };
+}
+
+// Source Coverage metric: how many distinct outlets in one story cluster belong
+// to each side of the spectrum. Unrated outlets are counted separately, never
+// folded into Center. This answers "who covered it", not "how it is written".
+export function sourceBreakdownOf(rows = []) {
+  const seen = new Map();
+  for (const row of rows) {
+    const info = resolveSource(row);
+    if (!info.source || seen.has(info.source)) continue;
+    seen.set(info.source, info.lean);
+  }
+  const out = {
+    leftCount: 0, centerCount: 0, rightCount: 0, untrackedCount: 0, totalSources: seen.size,
+  };
+  for (const lean of seen.values()) {
+    if (!LEANS.includes(lean)) { out.untrackedCount += 1; continue; }
+    const group = leanGroup(lean);
+    if (group === 'left') out.leftCount += 1;
+    else if (group === 'right') out.rightCount += 1;
+    else out.centerCount += 1;
+  }
+  return out;
+}
+
+// Seven buckets for the coverage dashboard, matching the StoryCluster schema.
+export function sourceCountsOf(rows = []) {
+  const seen = new Map();
+  for (const row of rows) {
+    const info = resolveSource(row);
+    if (!info.source || seen.has(info.source)) continue;
+    seen.set(info.source, info.lean);
+  }
+  const out = {
+    total: seen.size, left: 0, leanLeft: 0, center: 0, leanRight: 0, right: 0, untracked: 0,
+  };
+  for (const lean of seen.values()) {
+    const key = { 'center-left': 'leanLeft', 'center-right': 'leanRight' }[lean] || lean;
+    if (key in out) out[key] += 1;
+    else out.untracked += 1;
+  }
+  return out;
+}
+
+// One meta payload for the client: rating record + country + logo, keyed by
+// publication name so cards can render a source block without extra requests.
+export function sourceDirectory() {
+  const out = {};
+  for (const [name, meta] of Object.entries(SOURCE_META)) {
+    const profile = profileOf(name);
+    out[name] = {
+      ...meta,
+      country: meta.country || profile?.country || '',
+      domain: profile?.domain || '',
+      logoUrl: logoUrlFor(profile?.domain),
+    };
+  }
+  return out;
+}
 
 // Blindspot: one lean group has <15% of coverage AND total sources >= 4
 export const isBlindspot = (counts) => {

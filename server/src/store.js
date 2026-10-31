@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { classify } from './classify.js';
+import { resolveSource, sourceBreakdownOf, sourceCountsOf } from './bias.js';
 import { assignClusters, clusterAll, articleHash, CLUSTER_VERSION } from './cluster.js';
 
 // Articles are kept on disk so past days stay browsable after the 20-minute
@@ -25,6 +26,9 @@ export function loadArchive() {
   try {
     const parsed = JSON.parse(fs.readFileSync(FILE, 'utf8'));
     savedVersion = parsed.clusterVersion ?? 0;
+    // Restore the last refresh time so the dashboard is not blank until the
+    // first fetch after a restart finishes.
+    updatedAt = parsed.updatedAt || null;
     // Rows archived before the content classifier existed only carry their
     // feed's tag, so re-score them once on load. The classifier is stable, so
     // this is a no-op for everything it already got right.
@@ -118,17 +122,47 @@ function buildStories() {
 
   const out = [];
   for (const [id, members] of groups) {
-    members.sort((x, y) => new Date(x.publishedAt) - new Date(y.publishedAt));
-    const primary = members.find((m) => m.summary) || members[0];
-    const alsoReportedBy = members.filter((m) => m !== primary).map((m) => ({
+    // Resolve aggregator names to the publishing outlet through the URL, so the
+    // coverage counts and the source block describe the real newsroom.
+    const resolved = members
+      .map((member) => ({ ...member, ...resolveSource(member) }))
+      .sort((x, y) => new Date(x.publishedAt) - new Date(y.publishedAt));
+    const primary = resolved.find((m) => m.summary) || resolved[0];
+    const alsoReportedBy = resolved.filter((m) => m !== primary).map((m) => ({
       source: m.source, url: m.url, title: m.title,
       publishedAt: m.publishedAt, lean: m.lean, author: m.author || null, image: m.image || null,
+      country: m.country, domain: m.domain, logoUrl: m.logoUrl,
+      factuality: m.factuality, ownership: m.ownership,
     }));
-    const latestAt = members[members.length - 1].publishedAt;
-    out.push({ ...primary, id, alsoReportedBy, latestAt });
+    const latestAt = resolved[resolved.length - 1].publishedAt;
+    // Three story-level fields: outlet distribution (grouped and 7-bucket),
+    // and the analysis precomputed at ingestion time.
+    const sourceBreakdown = sourceBreakdownOf(resolved);
+    const sourceCounts = sourceCountsOf(resolved);
+    out.push({
+      ...primary, id, alsoReportedBy, latestAt, sourceBreakdown, sourceCounts,
+      analysis: primary.analysis || null,
+    });
   }
 
   return out.sort((a, b) => new Date(b.latestAt) - new Date(a.latestAt));
+}
+
+// Ingestion-time analysis is written back to every member of the cluster so it
+// survives restarts and is returned with the cards, never computed on load.
+export function setStoryAnalysis(clusterId, analysis) {
+  if (!clusterId || !analysis) return false;
+  let changed = false;
+  for (const article of articles) {
+    if ((article.clusterId || articleHash(article.url)) !== clusterId) continue;
+    article.analysis = analysis;
+    changed = true;
+  }
+  if (!changed) return false;
+  stories = null;
+  dirty = true;
+  save();
+  return true;
 }
 
 export function snapshot() {
