@@ -155,7 +155,7 @@ function StatsRail({ articles, days, onDay }) {
                 className="rounded-full border border-line px-2.5 py-1 text-[11px] font-medium text-muted transition-colors hover:border-accent hover:text-accent">
                 {dayLabel(d.date)} <span className="text-muted/70">{d.count}</span>
               </button>
-            ))
+            ))}
           </div>
         </section>
       )}
