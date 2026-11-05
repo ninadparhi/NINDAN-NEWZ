@@ -69,6 +69,27 @@ export function toPercentages(weights) {
 
 // --------------------------------------------------------------- off-line NLP
 
+// Derive bias percentages from the cluster's source outlet counts,
+// so the BIAS BREAKDOWN sidebar matches the Coverage Details bar.
+// sourceCounts format: { total, left, leanLeft, center, leanRight, right, untracked }
+export function biasFromSourceCounts(sourceCounts = {}) {
+  const { total = 0, left = 0, leanLeft = 0, center = 0, leanRight = 0, right = 0, untracked = 0 } = sourceCounts;
+  const totalRated = total - (untracked || 0);
+  if (totalRated <= 0) return { left: 0, leanLeft: 0, center: 0, leanRight: 0, right: 0 };
+  const counts = { left, leanLeft, center, leanRight, right };
+  const out = {};
+  LEAN_KEYS.forEach((key) => { out[key] = counts[key] || 0 });
+  const sum = out.left + out.leanLeft + out.center + out.leanRight + out.right;
+  if (sum <= 0) return { left: 0, leanLeft: 0, center: 0, leanRight: 0, right: 0 };
+  return {
+    left: Math.round((out.left / totalRated) * 100),
+    leanLeft: Math.round((out.leanLeft / totalRated) * 100),
+    center: Math.round((out.center / totalRated) * 100),
+    leanRight: Math.round((out.leanRight / totalRated) * 100),
+    right: Math.round((out.right / totalRated) * 100),
+  };
+}
+
 const LEFT_CUES = [
   'hardline', 'communal', 'communalism', 'majoritarian', 'far-right', 'far right',
   'divisive', 'intolerance', 'hate speech', 'chilling effect', 'authoritarian',
@@ -510,6 +531,8 @@ export function normalizeAnalysis(raw, options = {}) {
   const facts = bullets(raw?.synthesis?.undisputedFacts, 3);
   const partisan = bullets(raw?.synthesis?.partisanSpin, 3);
   const bias = biasFromLLM(raw?.bias) || heuristicBias(text, source);
+  // Derive a source-count‑based breakdown that matches Coverage Details.
+  const biasFromCounts = biasFromSourceCounts(options?.sourceCounts);
   const simpleSummary = normalizeText(raw?.simpleSummary)
     || heuristicSimpleSummary(text, { category, facts: offline.undisputedFacts });
   const rationale = normalizeText(raw?.biasRationale) || biasRationale(text, bias, source);
@@ -527,6 +550,7 @@ export function normalizeAnalysis(raw, options = {}) {
     biasRating: biasRating(bias),
     biasPercentage: biasPercentage(bias),
     biasRationale: rationale,
+    biasFromCounts,
     simpleSummary,
     keyTopics: normalizeTopics(raw?.keyTopics, keyTopics(text, { title: title || '', limit: 8 })),
     spin: fallbackSpin,

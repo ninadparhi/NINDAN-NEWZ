@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import DateArchiveBar from './DateArchiveBar';
 import {
-  api, dayLabel, localDay, Card, CoverageBar, bucketTotal, emptyCounts, dominantBucket,
+  api, dayLabel, localDay, ago,
+  Card, CoverageBar, bucketTotal, emptyCounts, dominantBucket,
   BUCKETS, BiasChip, leanInfo,
 } from './ui.jsx';
 import StoryPage from './StoryPage.jsx';
+import Reader from './Reader.jsx';
 import { Link, usePath } from './router.jsx';
 
 const EMPTY = { region: 'india', category: '', source: '', date: '', q: '' };
@@ -13,14 +16,39 @@ const EMPTY = { region: 'india', category: '', source: '', date: '', q: '' };
 function filtersFromUrl() {
   const qs = new URLSearchParams(window.location.search);
   const region = qs.get('region');
+  const date = qs.get('date') || '';
   return {
     region: region === 'all' ? '' : region || 'india',
     category: qs.get('category') || '',
     source: qs.get('source') || '',
-    date: qs.get('date') || '',
+    date, // keep the queried date in state
     q: qs.get('q') || '',
   };
 }
+// Track selected date from URL or default to today.
+const [selectedDate, setSelectedDate] = useState(() => localDay(0));
+useEffect(() => {
+  const qs = new URLSearchParams(window.location.search);
+  const qsDate = qs.get('date');
+  if (qsDate) {
+    // Validate the date is not in the future
+    const requested = new Date(qsDate);
+    const today = new Date();
+    if (!isNaN(requested.getTime()) && requested <= today) {
+      setSelectedDate(qsDate);
+    }
+  }
+}, []);
+// Sync URL when selectedDate changes (except initial load)
+useEffect(() => {
+  const qs = new URLSearchParams(window.location.search);
+  // Only update URL if the date changed from the query
+  if (qs.get('date') !== selectedDate) {
+    const newQs = new URLSearchParams(qs.toString());
+    newQs.set('date', selectedDate);
+    history.replaceState(history.state, '', `/?${newQs}`);
+  }
+}, [selectedDate]);
 
 const field = 'h-10 w-full rounded-xl border border-line bg-surface px-3 text-sm text-ink placeholder:text-muted/70 focus:border-accent focus:outline-none';
 
@@ -181,10 +209,15 @@ function Home() {
   }, [f]);
 
   const load = useCallback(() => {
-    api('news', f)
+    const params = { ...f };
+    // If we have a selectedDate that differs from the filter, use it
+    if (selectedDate && selectedDate !== f.date) {
+      params.date = selectedDate;
+    }
+    api('news', params)
       .then((d) => { setData(d); setStatus('ok'); })
       .catch(() => setStatus('error'));
-  }, [f]);
+  }, [selectedDate, f]);
 
   useEffect(() => {
     const t = setTimeout(load, f.q ? 300 : 0);
@@ -222,6 +255,16 @@ function Home() {
             Headlines from India and around the world — every story linked to its publisher, with the editorial lean of the outlets covering it.
           </p>
         </section>
+
+        <DateArchiveBar
+          selectedDate={selectedDate}
+          onDateChange={(iso, isToday) => {
+            setSelectedDate(iso);
+            // Also update the filter state
+            setF((p) => ({ ...p, date: iso }));
+          }}
+          isArchive={selectedDate !== localDay(0)}
+        />
 
         <section className="mt-6 rounded-2xl border border-line bg-surface p-3 sm:p-4" aria-label="Filters">
           <div className="flex flex-wrap items-center gap-2">
@@ -354,7 +397,8 @@ export default function App() {
         </div>
       </header>
 
-      {storyId ? <StoryPage id={storyId} /> : <Home />}
+      {storyId ? <StoryPage id={storyId} /> : null}
+      {storyId && <Reader id={storyId} />}
 
       <footer className="border-t border-line bg-surface2/60">
         <div className="mx-auto grid max-w-content gap-6 px-4 py-8 text-xs leading-relaxed text-muted sm:grid-cols-3">

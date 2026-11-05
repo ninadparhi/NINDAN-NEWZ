@@ -10,7 +10,7 @@ import { CATEGORIES, FEEDS } from './feeds.js';
 import {
   LEANS, LEAN_BUCKETS, bucketCountsOf, RATING_PROVIDERS, FACTUALITY, OWNER_TYPES, isBlindspot, sourceDirectory,
 } from './bias.js';
-import { loadArchive, mergeIntoStore, snapshot, daysAvailable, dayIn } from './store.js';
+import { loadArchive, mergeIntoStore, snapshot, daysAvailable, dayIn, setFullArticle, archivedFullArticle } from './store.js';
 import { ogImage, placeholderImage } from './images.js';
 import { cutWords } from './text.js';
 import { analyzeArticle } from './analyze.js';
@@ -19,6 +19,7 @@ import { stakeholderOf } from './stakeholders.js';
 import { trendingTopics } from './topics.js';
 import { llmStatus } from './llm.js';
 import { precomputeAnalyses } from './precompute.js';
+import { fullArticle } from './extract.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -133,6 +134,28 @@ app.get('/api/news/:id', (req, res) => {
     coverageBuckets,
     blindspot: isBlindspot(coverageBuckets),
   });
+});
+
+// Full article for the reader view. The page is fetched and parsed on the
+// server (never in the browser), cached in memory and on the archived row.
+// `u` lets the reader open one of the other outlets covering the same story,
+// but only URLs that belong to that cluster so this never becomes an open
+// scraper proxy.
+app.get('/api/news/:id/full', async (req, res) => {
+  const story = snapshot().articles.find((x) => x.id === req.params.id);
+  if (!story) return res.status(404).json({ error: 'Story not found' });
+
+  const allowed = [story.url, ...story.alsoReportedBy.map((x) => x.url)].filter(Boolean);
+  const wanted = req.query.u ? String(req.query.u) : story.url;
+  const url = allowed.includes(wanted) ? wanted : story.url;
+  const refresh = req.query.refresh === '1';
+
+  const cached = refresh ? null : archivedFullArticle(url);
+  const article = cached || await fullArticle(url, { refresh });
+  if (!cached && article.status !== 'unavailable') setFullArticle(url, article);
+
+  res.set('Cache-Control', refresh ? 'no-store' : 'public, max-age=1800');
+  res.json({ ...article, storyId: story.id, source: story.source, outlets: allowed.length });
 });
 
 app.get('/api/days', (req, res) => {

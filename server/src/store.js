@@ -165,6 +165,22 @@ export function setStoryAnalysis(clusterId, analysis) {
   return true;
 }
 
+// A successfully extracted article is written back onto the archived row, so
+// the reader opens instantly after a restart instead of hitting the publisher
+// again. Failures are not persisted: they may be temporary blocks.
+export function setFullArticle(url, article) {
+  if (!url || !article) return false;
+  const row = articles.find((a) => a.url === url);
+  if (!row) return false;
+  row.fullArticle = article;
+  stories = null;
+  dirty = true;
+  save();
+  return true;
+}
+
+export const archivedFullArticle = (url) => articles.find((a) => a.url === url)?.fullArticle || null;
+
 export function snapshot() {
   if (!stories) stories = buildStories();
   return { articles: stories, updatedAt };

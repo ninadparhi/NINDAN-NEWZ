@@ -624,17 +624,16 @@ function readerShell(story) {
         ${story.imageUrl
     ? `<figure class="reader-media"><img src="${esc(story.imageUrl)}" alt=""
          ${story.imageSource === 'placeholder' && story.url ? `data-og="${esc(story.url)}"` : ''}></figure>`
-    : ''}
-        <div class="metrics" id="bias-metrics">
+    : ''}          <div class="metrics" id="bias-metrics">
           <div class="metrics-tabs" role="tablist" aria-label="Bias metrics">
-            <button class="metric-tab active" role="tab" aria-selected="true" data-metric-tab="ai">AI content bias</button>
-            <button class="metric-tab" role="tab" aria-selected="false" data-metric-tab="sources">Source coverage</button>
+            <button class="metric-tab active" role="tab" aria-selected="true" data-metric-tab="source-breakdown">Source Outlet Breakdown</button>
+            <button class="metric-tab" role="tab" aria-selected="false" data-metric-tab="text-framing">Article Language Framing</button>
           </div>
-          <div class="metric-panel" data-metric-panel="ai">
-            <div id="ai-bias-body"><p class="muted small">Scoring the article text…</p></div>
+          <div class="metric-panel" data-metric-panel="source-breakdown">
+            <div id="ai-bias-body"></div>
           </div>
-          <div class="metric-panel" data-metric-panel="sources" hidden>
-            ${coveragePanelHtml(story)}
+          <div class="metric-panel" data-metric-panel="text-framing" hidden>
+            <div id="ai-bias-body"></div>
           </div>
         </div>
         <div id="consensus-panel" class="reader-consensus"></div>
@@ -881,6 +880,24 @@ function mountQuickContext(analysis) {
     || 'A plain-language summary is not available for this excerpt yet.';
 }
 
+function leanLabelFromKey(key) {
+  return { left: 'Left', leanLeft: 'Lean Left', center: 'Center', leanRight: 'Lean Right', right: 'Right' }[key] || key;
+}
+
+function biasPercentFromCounts(sourceCounts = {}) {
+  // Derive percentages from the cluster's source outlet counts — matches Coverage Details.
+  const { total = 0, left = 0, leanLeft = 0, center = 0, leanRight = 0, right = 0, untracked = 0 } = sourceCounts;
+  const totalRated = total - (untracked || 0);
+  if (totalRated <= 0) return { left: 0, leanLeft: 0, center: 0, leanRight: 0, right: 0 };
+  return {
+    left: Math.round((left / totalRated) * 100),
+    leanLeft: Math.round((leanLeft / totalRated) * 100),
+    center: Math.round((center / totalRated) * 100),
+    leanRight: Math.round((leanRight / totalRated) * 100),
+    right: Math.round((right / totalRated) * 100),
+  };
+}
+
 function mountAnalysis(analysis, framing = null) {
   const body = view.querySelector('#xray-body');
   if (body && analysis.text) body.replaceChildren(renderXRay(analysis.text, analysis.spin));
@@ -894,20 +911,49 @@ function mountAnalysis(analysis, framing = null) {
 
   const aiHost = view.querySelector('#ai-bias-body');
   if (aiHost) {
+    const sourceCounts = framing?.sourceCounts || story?.sourceCounts || { total: 0 };
+    const biasFromCounts = biasPercentFromCounts(sourceCounts);
+    const biasFromText = {
+      rating: analysis.biasRating || 'Center',
+      percentage: analysis.biasPercentage || 0,
+      bias: analysis.bias,
+    };
+
+    const countsTotal = sourceCounts.total || 0;
+    const label = countsTotal ? `${countsTotal} outlets` : 'no outlets';
+
     aiHost.innerHTML = `
-      <p class="small"><strong>${esc(analysis.biasRating || 'Center')}</strong>
-        <span class="muted">/ ${Number(analysis.biasPercentage || 0)}% of the framing weight</span></p>
-      ${biasMeterHtml(analysis.bias)}
-      ${biasHtml(analysis.bias)}
-      <button class="link-btn" id="why-score" aria-expanded="false">Why this score?</button>
-      <p class="rationale" id="why-score-note" hidden>${esc(analysis.biasRationale || 'The score comes from the article text and the outlet prior.')}</p>
-      <p class="muted small">Scored from the wording of this article, not from the outlet's reputation.</p>`;
+      <p class="small" aria-label="bias source">${labels.countsTotal ? `${countsTotal} outlets` : 'no outlets'}</p>
+      <div class="bias-breakdown" data-type="source">
+        <h4>Source Outlet Breakdown</h4>
+        <p class="muted small">Derived from the cluster's outlet distribution (matches Coverage Details)</p>
+        <div class="bias-block">
+          ${LEAN_ROWS.map(([key, label]) => {
+            const value = biasFromCounts[key] || 0;
+            return `
+              <div class="bias-row">
+                <span>${leanLabelFromKey(key)}</span>
+                <div class="track"><span class="fill lean-${leanSlug(key.replace('leanLeft', 'center-left').replace('leanRight', 'center-right'))}" style="width:${value}%"></span></div>
+                <b>${value}%</b>
+              </div>
+            `;
+          }).join('')}
+        </div>
+        <p class="muted small" aria-live="polite">${labels.countsTotal ? `Total rated: ${countsTotal - (sourceCounts.untracked || 0)}` : 'No rated outlets'}</p>
+      </div>
+      <div class="bias-breakdown" data-type="text" hidden>
+        <h4>Article Language Framing</h4>
+        <p class="muted small">Scored from the wording of this article, not from the outlet's reputation</p>
+        <p class="small"><strong>${biasFromText.rating}</strong>
+          <span class="muted">/ ${biasFromText.percentage}% of the framing weight</span></p>
+        ${biasMeterHtml(biasFromText.bias)}
+        ${biasHtml(biasFromText.bias)}
+        <button class="link-btn" id="why-score" aria-expanded="false">Why this score?</button>
+        <p class="rationale" id="why-score-note" hidden>${esc(analysis.biasRationale || 'The score comes from the article text and the outlet prior.')}</p>
+        <p class="muted small">Scored from the wording of this article, not from the outlet's reputation.</p>`;
     aiHost.querySelector('#why-score')?.addEventListener('click', (event) => {
       const why = aiHost.querySelector('#why-score-note');
       const opening = why.hidden;
-      why.hidden = !opening;
-      event.currentTarget.setAttribute('aria-expanded', String(opening));
-      event.currentTarget.textContent = opening ? 'Hide the rationale' : 'Why this score?';
     });
   }
 
